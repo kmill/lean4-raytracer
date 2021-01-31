@@ -17,3 +17,11 @@ the entire image is rendered multiple times, and the results are averaged togeth
 ![final test image, higher resolution](https://github.com/kmill/lean4-raytracer/blob/master/test13.bigger.png?raw=true)
 
 (2 hours with 16 threads on an Intel Xeon E5-2665. 800x533 pixels, 480 total samples per pixel, max depth 50.)
+
+## Running the code
+
+Assuming you already have Lean 4 setup, this builds an executable and runs it:
+```
+$ leanpkg build build/bin/render && time ./build/bin/render test.ppm
+```
+The rendering settings are hard-coded in `writeTestImage` in `render.lean`.
