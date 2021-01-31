@@ -8,3 +8,5 @@ This repository implements the ray tracer described in
 
 The raytracer uses `Task`s to do supersampling in parallel.  The entire image is rendered multiple
 times in parallel, and the results are averaged together.
+
+![final test image](https://github.com/kmill/lean4-raytracer/blob/master/test13.png?raw=true)
