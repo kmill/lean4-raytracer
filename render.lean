@@ -128,7 +128,7 @@ def refract (uv : Vec3 Float) (n : Vec3 Float) (etai_over_etat : Float) : Vec3 F
   let rOutParallel := (-Float.sqrt (Float.abs (1.0 - rOutPerp.lengthSquared))) * n
   rOutPerp + rOutParallel
 
-def dialectric (indexOfRefraction : Float) : Material where
+def dielectric (indexOfRefraction : Float) : Material where
   scatter (r : Ray Float) (hitrec : HitRecord) := do
     let refractionRatio := if hitrec.frontFace then 1.0/indexOfRefraction else indexOfRefraction
     let unitDirection := r.dir.normalized
@@ -175,14 +175,14 @@ def mkSphere (center : Vec3 Float) (radius : Float) (mat : Material) : Hittable 
     let outwardNormal := (p - center) / radius
     return some (HitRecord.withNormal p t r outwardNormal, mat)
 
-def hitList (hs : List Hittable) (r : Ray Float) (tmin tmax : Float) : Option (HitRecord × Material) := Id.run <| do
+def hitList (hs : Array Hittable) (r : Ray Float) (tmin tmax : Float) : Option (HitRecord × Material) := Id.run <| do
   let mut hitrec : Option (HitRecord × Material) := none
   for obj in hs do
     let closest := (hitrec.map (HitRecord.t ∘ Prod.fst)).getD tmax
     hitrec := obj.hit r tmin closest <|> hitrec
   return hitrec
 
-def rayColor (hs : List Hittable) (r : Ray Float) : (depth : Nat) → IO (Color Float)
+def rayColor (hs : Array Hittable) (r : Ray Float) : (depth : Nat) → IO (Color Float)
 | 0 => return ⟨0, 0, 0⟩ -- exceeded ray bounce limit, no more light gathered
 | (depth+1) => do
   match hitList hs r 0.001 Float.infinity with
@@ -206,43 +206,50 @@ def IO.FS.Handle.writeColor (handle : IO.FS.Handle) (c : Color Float) : IO Unit 
   let b := Float.clampToUInt8 (256 * c.b.sqrt)
   handle.putStrLn s!"{r} {g} {b}"
 
+def randomScene : IO (Array Hittable) := do
+  let mut world : Array Hittable := #[]
+
+  -- Ground
+  world := world.push <| mkSphere ⟨0, -1000, 0⟩ 1000 (lambertian ⟨0.5, 0.5, 0.5⟩)
+
+  for a' in [0:22] do
+    let a := Float.ofNat a' - 11
+    for b' in [0:22] do
+      let b := Float.ofNat b' - 11
+      let center : Vec3 Float := ⟨a + 0.9 * (← IO.randFloat), 0.2, b + 0.9 * (← IO.randFloat)⟩
+      if Vec3.length (center - Vec3.mk 4 0.2 0) > 0.9 then
+        let chooseMat ← IO.randFloat
+        if chooseMat < 0.9 then
+          let albedo : Color Float := (← IO.randVec3) * (← IO.randVec3)
+          world := world.push <| mkSphere center 0.2 (lambertian albedo)
+        else if chooseMat < 0.95 then
+          let albedo : Color Float ← IO.randVec3 0.5 1
+          let fuzz ← IO.randFloat 0 0.5
+          world := world.push <| mkSphere center 0.2 (metal albedo fuzz)
+        else
+          world := world.push <| mkSphere center 0.2 (dielectric 1.5)
+
+  world := world.push <| mkSphere ⟨0, 1, 0⟩ 1 (dielectric 1.5)
+  world := world.push <| mkSphere ⟨-4, 1, 0⟩ 1 (lambertian ⟨0.4, 0.2, 0.1⟩)
+  world := world.push <| mkSphere ⟨4, 1, 0⟩ 1 (metal ⟨0.7, 0.6, 0.5⟩)
+
+  return world
+
 def writeTestImage (filename : String) : IO Unit := do
-  let width : Nat := 400
-  let height : Nat := width * 9 / 16
+  let width : Nat := 500
+  let height : Nat := width * 2 / 3
   let aspectRatio : Float := (Float.ofNat width) / (Float.ofNat height)
   let numThreads := 8
-  let samplesPerPixel := 20
-  let maxDepth := 15
+  let samplesPerPixel := 10
+  let maxDepth := 30
 
-  let material_ground := lambertian (Color.mk 0.8 0.8 0.0)
-  let material_center := lambertian (Color.mk 0.7 0.3 0.3)
-  let material_left := metal (Color.mk 0.8 0.8 0.8) 0.3
-  let material_right := metal (Color.mk 0.8 0.6 0.2) 0.1
-  let material_center := dialectric 1.5
-  let material_blue_matte := lambertian (Color.mk 0.1 0.2 0.5)
-  let material_blue := lambertian (Color.mk 0 0 1)
-  let material_red := lambertian (Color.mk 1 0 0)
+  let world ← randomScene
 
-  let world : List Hittable := [
-    mkSphere (Vec3.mk 0.0 (-100.5) (-1.0)) 100.0 material_ground
-    , mkSphere (Vec3.mk 0.0 0.0 (-1.0)) 0.5 material_center
-    , mkSphere (Vec3.mk (-1.0) 0.0 (-1.0)) 0.5 material_left
-    , mkSphere (Vec3.mk 1.0 0.0 (-1.0)) 0.5 material_right
-    , mkSphere (Vec3.mk 0.0 0.0 (-2.0)) 0.5 material_blue_matte
-  ]
-
-  /-
-  let R := Float.cos (Float.pi / 4)
-  let world : List Hittable := [
-    mkSphere (Vec3.mk (-R) 0 (-1)) R material_blue,
-    mkSphere (Vec3.mk R 0 (-1)) R material_red
-  ]-/
-
-  let lookFrom : Vec3 Float := ⟨3, 3, 2⟩
-  let lookAt : Vec3 Float := ⟨0, 0, -1⟩
+  let lookFrom : Vec3 Float := ⟨13, 2, 3⟩
+  let lookAt : Vec3 Float := ⟨0, 0, 0⟩
   let vup : Vec3 Float := ⟨0, 1, 0⟩
-  let distToFocus := (lookFrom - lookAt).length
-  let aperture := 2.0
+  let distToFocus := 10
+  let aperture := 0.1
   let cam := Camera.default lookFrom lookAt vup 20.0 aspectRatio aperture distToFocus
 
   let renderTask (showProgress := false) : IO (Array (Color Float)) := do
