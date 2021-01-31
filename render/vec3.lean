@@ -57,4 +57,7 @@ def mk (r g b : α) : Color α := ⟨r, g, b⟩
 @[inline] def g (v : Color α) : α := v.y
 @[inline] def b (v : Color α) : α := v.z
 
+@[inline] def white : Color Float := Color.mk 1.0 1.0 1.0
+@[inline] def black : Color Float := Color.mk 0.0 0.0 0.0
+
 end Color

@@ -1,5 +1,9 @@
 import render.vec3
 
+@[inline] def Float.max (x y : Float) : Float := if x ≤ y then y else x
+@[inline] def Float.min (x y : Float) : Float := if x ≤ y then x else y
+@[inline] def Float.abs (x : Float) : Float := if x ≤ 0 then -x else x
+
 /-- Uniform at random in [0, 1)-/
 def randomFloat {gen} [RandomGen gen] (g : gen) : Float × gen :=
   let (n, g') := RandomGen.next g
@@ -81,14 +85,28 @@ def lambertian (albedo : Color Float) : Material where
     let scattered := Ray.mk hitrec.p scatterDir
     return MaterialResponse.scatter albedo scattered
 
-def metal (albedo : Color Float) : Material where
+def metal (albedo : Color Float) (fuzz : Float := 0.0) : Material where
   scatter (r : Ray Float) (hitrec : HitRecord) := do
     let reflected := r.dir.normalized.reflect hitrec.normal
-    let scattered := Ray.mk hitrec.p reflected
+    let scattered := Ray.mk hitrec.p (reflected + fuzz * (← IO.randVec3InUnitSphere))
     if scattered.dir.dot hitrec.normal > 0.0 then
       return MaterialResponse.scatter albedo scattered
     else
       return MaterialResponse.absorb
+
+def refract (uv : Vec3 Float) (n : Vec3 Float) (etai_over_etat : Float) : Vec3 Float :=
+  let cos_theta := Float.min (- uv.dot n) 1.0
+  let r_out_perp := etai_over_etat * (uv + cos_theta * n)
+  let r_out_parallel := (-Float.sqrt (Float.abs (1.0 - r_out_perp.lengthSquared))) * n
+  r_out_perp + r_out_parallel
+
+def dialectric (indexOfRefraction : Float) : Material where
+  scatter (r : Ray Float) (hitrec : HitRecord) := do
+    let refractionRatio := if hitrec.frontFace then 1.0/indexOfRefraction else indexOfRefraction
+    let unitDirection := r.dir.normalized
+    let refracted := refract unitDirection hitrec.normal refractionRatio
+    let scattered := Ray.mk hitrec.p refracted
+    return MaterialResponse.scatter Color.white scattered
 
 structure Hittable where
   hit : Ray Float → Float -> Float -> Option (HitRecord × Material)
@@ -128,16 +146,13 @@ def rayColor (hs : List Hittable) (r : Ray Float) : (depth : Nat) → IO (Color 
   | some (hitrec, mat) => do
     match ← mat.scatter r hitrec with
     | MaterialResponse.absorb =>
-        return Color.mk 0.0 0.0 0.0
+        return Color.black
     | MaterialResponse.scatter albedo scattered =>
         return albedo * (← rayColor hs scattered depth)
   | none => do
     let unit : Vec3 Float := r.dir.normalized
     let t := 0.5 * (unit.y + 1.0)
-    return (1.0 - t) * (Color.mk 1.0 1.0 1.0) + t * (Color.mk 0.5 0.7 1.0)
-
-@[inline] def Float.max (x y : Float) : Float := if x ≤ y then y else x
-@[inline] def Float.min (x y : Float) : Float := if x ≤ y then x else y
+    return (1.0 - t) * Color.white + t * (Color.mk 0.5 0.7 1.0)
 
 def Float.clampToUInt8 (x : Float) : UInt8 :=
   Float.toUInt8 <| Float.min 255 <| Float.max 0 x
@@ -152,13 +167,14 @@ def writeTestImage (filename : String) : IO Unit := do
   let width : Nat := 400
   let height : Nat := width * 9 / 16
   let aspectRatio : Float := (Float.ofNat width) / (Float.ofNat height)
-  let samplesPerPixel := 70
+  let samplesPerPixel := 50
   let maxDepth := 20
 
   let material_ground := lambertian (Color.mk 0.8 0.8 0.0)
   let material_center := lambertian (Color.mk 0.7 0.3 0.3)
-  let material_left := metal (Color.mk 0.8 0.8 0.8)
-  let material_right := metal (Color.mk 0.8 0.6 0.2)
+  let material_left := metal (Color.mk 0.8 0.8 0.8) 0.3
+  let material_right := metal (Color.mk 0.8 0.6 0.2) 1.0
+  let material_center := dialectric 1.5
 
   let world : List Hittable := [
     mkSphere (Vec3.mk 0.0 (-100.5) (-1.0)) 100.0 material_ground,
@@ -177,7 +193,7 @@ def writeTestImage (filename : String) : IO Unit := do
       IO.println s!"line {j'+1} of {height}"
       let j := height - j' - 1
       for i in [0:width] do
-        let mut pixelColor := Color.mk 0.0 0.0 0.0
+        let mut pixelColor := Color.black
         for s in [0:samplesPerPixel] do
           let u := (Float.ofNat i + (← IO.randFloat))/ Float.ofNat width
           let v := (Float.ofNat j + (← IO.randFloat))/ Float.ofNat height
