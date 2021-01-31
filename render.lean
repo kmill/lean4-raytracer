@@ -23,14 +23,14 @@ def IO.randVec3 (lo := 0.0) (hi := 1.0) : IO (Vec3 Float) :=
   return ⟨←IO.randFloat lo hi, ←IO.randFloat lo hi, ←IO.randFloat lo hi⟩
 
 def IO.randVec3InUnitSphere : IO (Vec3 Float) := do
-  for i in [0:100] do -- 8e-29 probability of failure
+  for i in [0:100] do -- 7e-33 probability of failure
     let p ← IO.randVec3 (-1.0) (1.0)
     if p.lengthSquared < 1.0 then
       return p
   return ⟨1, 0, 0⟩
 
 def IO.randVec3InUnitDisk : IO (Vec3 Float) := do
-  for i in [0:100] do -- 8e-29 probability of failure
+  for i in [0:100] do -- 2e-67 probability of failure
     let p := Vec3.mk (← IO.randFloat (-1.0) (1.0)) (← IO.randFloat (-1.0) (1.0)) 0.0
     if p.lengthSquared < 1.0 then
       return p
