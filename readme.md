@@ -6,7 +6,10 @@ it can be used both as a proof assistant and for practical programs.
 This repository implements the ray tracer described in 
 [_Ray Tracing in One Weekend_](https://raytracing.github.io/books/RayTracingInOneWeekend.html).
 
-The raytracer uses `Task`s to do supersampling in parallel.  The entire image is rendered multiple
-times in parallel, and the results are averaged together.
+The raytracer uses `Task`s to render in parallel.  Part of a raytracer is using supersampling
+to better estimate the amount of light entering each pixel, so it is trivial to parallelize:
+the entire image is rendered multiple times, and the results are averaged together.
 
 ![final test image](https://github.com/kmill/lean4-raytracer/blob/master/test13.png?raw=true)
+
+(10 minutes with 8 threads on an Intel Xeon E5-2665. 500x333 pixels, 80 total samples per pixel, max depth 30.)
