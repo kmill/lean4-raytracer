@@ -60,4 +60,6 @@ def mk (r g b : α) : Color α := ⟨r, g, b⟩
 @[inline] def white : Color Float := Color.mk 1.0 1.0 1.0
 @[inline] def black : Color Float := Color.mk 0.0 0.0 0.0
 
+instance : Inhabited (Color Float) := ⟨black⟩
+
 end Color

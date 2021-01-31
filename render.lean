@@ -4,6 +4,9 @@ import render.vec3
 @[inline] def Float.min (x y : Float) : Float := if x ≤ y then x else y
 @[inline] def Float.abs (x : Float) : Float := if x ≤ 0 then -x else x
 
+def Float.pi : Float := 3.1415926535897932385
+def Float.infinity : Float := 1e100 -- fix this
+
 /-- Uniform at random in [0, 1)-/
 def randomFloat {gen} [RandomGen gen] (g : gen) : Float × gen :=
   let (n, g') := RandomGen.next g
@@ -22,9 +25,16 @@ def IO.randVec3 (lo := 0.0) (hi := 1.0) : IO (Vec3 Float) :=
 def IO.randVec3InUnitSphere : IO (Vec3 Float) := do
   for i in [0:100] do -- 8e-29 probability of failure
     let p ← IO.randVec3 (-1.0) (1.0)
-    if p.lengthSquared >= 1.0 then
+    if p.lengthSquared < 1.0 then
       return p
   return ⟨1, 0, 0⟩
+
+def IO.randVec3InUnitDisk : IO (Vec3 Float) := do
+  for i in [0:100] do -- 8e-29 probability of failure
+    let p := Vec3.mk (← IO.randFloat (-1.0) (1.0)) (← IO.randFloat (-1.0) (1.0)) 0.0
+    if p.lengthSquared < 1.0 then
+      return p
+  return ⟨0, 0, 0⟩
 
 structure Ray (α : Type _) where
   origin : Vec3 α
@@ -37,21 +47,39 @@ structure Camera where
   lowerLeftCorner : Vec3 Float
   horizontal : Vec3 Float
   vertical : Vec3 Float
+  (u v w : Vec3 Float) /- right up back -/
+  lensRadius : Float
 
-def Camera.default (aspectRatio : Float): Camera :=
-  let viewportHeight := 2.0
+/--
+vfov is the vertical field of view (in degrees)
+-/
+def Camera.default
+      (lookFrom lookAt vup : Vec3 Float)
+      (vfov : Float)
+      (aspectRatio : Float)
+      (aperture : Float)
+      (focusDist : Float) :
+      Camera :=
+  let theta := vfov / 180. * Float.pi
+  let h := Float.tan (theta / 2)
+  let viewportHeight := 2.0 * h
   let viewportWidth := aspectRatio * viewportHeight
-  let focalLength := 1.0
 
-  let origin := Vec3.mk 0.0 0.0 0.0
-  let horizontal := Vec3.mk viewportWidth 0.0 0.0
-  let vertical := Vec3.mk 0.0 viewportHeight 0.0
-  let lowerLeftCorner := origin - horizontal/2.0 - vertical/2.0 - Vec3.mk 0.0 0.0 focalLength
+  let w := (lookFrom - lookAt).normalized
+  let u := (vup.cross w).normalized
+  let v := w.cross u
 
-  Camera.mk origin lowerLeftCorner horizontal vertical
+  let origin := lookFrom
+  let horizontal := focusDist * viewportWidth * u
+  let vertical := focusDist * viewportHeight * v
+  let lowerLeftCorner := origin - horizontal/2.0 - vertical/2.0 - focusDist * w
 
-def Camera.getRay (c : Camera) (u v : Float) : Ray Float :=
-  Ray.mk c.origin (c.lowerLeftCorner + u*c.horizontal + v*c.vertical - c.origin)
+  Camera.mk origin lowerLeftCorner horizontal vertical u v w (aperture / 2.0)
+
+def Camera.getRay (c : Camera) (s t : Float) : IO (Ray Float) := do
+  let rd := c.lensRadius * (← IO.randVec3InUnitDisk)
+  let offset := rd.x * c.u + rd.y * c.v
+  Ray.mk (c.origin + offset) (c.lowerLeftCorner + s*c.horizontal + t*c.vertical - c.origin - offset)
 
 structure HitRecord where
   p : Vec3 Float
@@ -95,17 +123,32 @@ def metal (albedo : Color Float) (fuzz : Float := 0.0) : Material where
       return MaterialResponse.absorb
 
 def refract (uv : Vec3 Float) (n : Vec3 Float) (etai_over_etat : Float) : Vec3 Float :=
-  let cos_theta := Float.min (- uv.dot n) 1.0
-  let r_out_perp := etai_over_etat * (uv + cos_theta * n)
-  let r_out_parallel := (-Float.sqrt (Float.abs (1.0 - r_out_perp.lengthSquared))) * n
-  r_out_perp + r_out_parallel
+  let cosTheta := Float.min (- uv.dot n) 1.0
+  let rOutPerp := etai_over_etat * (uv + cosTheta * n)
+  let rOutParallel := (-Float.sqrt (Float.abs (1.0 - rOutPerp.lengthSquared))) * n
+  rOutPerp + rOutParallel
 
 def dialectric (indexOfRefraction : Float) : Material where
   scatter (r : Ray Float) (hitrec : HitRecord) := do
     let refractionRatio := if hitrec.frontFace then 1.0/indexOfRefraction else indexOfRefraction
     let unitDirection := r.dir.normalized
-    let refracted := refract unitDirection hitrec.normal refractionRatio
-    let scattered := Ray.mk hitrec.p refracted
+    let cosTheta := Float.min (-unitDirection.dot hitrec.normal) 1.0
+    let sinTheta := Float.sqrt (1.0 - cosTheta * cosTheta)
+    let cannotRefract : Bool := refractionRatio * sinTheta > 1.0
+
+    -- Schlick's approximation
+    let reflectance (cosine : Float) (refIdx : Float) : Float :=
+      let r0' := (1 - refIdx) / (1 + refIdx)
+      let r0 := r0' * r0'
+      r0 + (1 - r0) * Float.pow (1 - cosine) 5
+
+    let direction : Vec3 Float :=
+      if cannotRefract || reflectance cosTheta refractionRatio > (← IO.randFloat) then
+        Vec3.reflect unitDirection hitrec.normal
+      else
+        refract unitDirection hitrec.normal refractionRatio
+
+    let scattered := Ray.mk hitrec.p direction
     return MaterialResponse.scatter Color.white scattered
 
 structure Hittable where
@@ -142,7 +185,7 @@ def hitList (hs : List Hittable) (r : Ray Float) (tmin tmax : Float) : Option (H
 def rayColor (hs : List Hittable) (r : Ray Float) : (depth : Nat) → IO (Color Float)
 | 0 => return ⟨0, 0, 0⟩ -- exceeded ray bounce limit, no more light gathered
 | (depth+1) => do
-  match hitList hs r 0.001 100000000.0 with
+  match hitList hs r 0.001 Float.infinity with
   | some (hitrec, mat) => do
     match ← mat.scatter r hitrec with
     | MaterialResponse.absorb =>
@@ -167,39 +210,77 @@ def writeTestImage (filename : String) : IO Unit := do
   let width : Nat := 400
   let height : Nat := width * 9 / 16
   let aspectRatio : Float := (Float.ofNat width) / (Float.ofNat height)
-  let samplesPerPixel := 50
-  let maxDepth := 20
+  let numThreads := 8
+  let samplesPerPixel := 20
+  let maxDepth := 15
 
   let material_ground := lambertian (Color.mk 0.8 0.8 0.0)
   let material_center := lambertian (Color.mk 0.7 0.3 0.3)
   let material_left := metal (Color.mk 0.8 0.8 0.8) 0.3
-  let material_right := metal (Color.mk 0.8 0.6 0.2) 1.0
+  let material_right := metal (Color.mk 0.8 0.6 0.2) 0.1
   let material_center := dialectric 1.5
+  let material_blue_matte := lambertian (Color.mk 0.1 0.2 0.5)
+  let material_blue := lambertian (Color.mk 0 0 1)
+  let material_red := lambertian (Color.mk 1 0 0)
 
   let world : List Hittable := [
-    mkSphere (Vec3.mk 0.0 (-100.5) (-1.0)) 100.0 material_ground,
-    mkSphere (Vec3.mk 0.0 0.0 (-1.0)) 0.5 material_center,
-    mkSphere (Vec3.mk (-1.0) 0.0 (-1.0)) 0.5 material_left,
-    mkSphere (Vec3.mk 1.0 0.0 (-1.0)) 0.5 material_right
+    mkSphere (Vec3.mk 0.0 (-100.5) (-1.0)) 100.0 material_ground
+    , mkSphere (Vec3.mk 0.0 0.0 (-1.0)) 0.5 material_center
+    , mkSphere (Vec3.mk (-1.0) 0.0 (-1.0)) 0.5 material_left
+    , mkSphere (Vec3.mk 1.0 0.0 (-1.0)) 0.5 material_right
+    , mkSphere (Vec3.mk 0.0 0.0 (-2.0)) 0.5 material_blue_matte
   ]
 
-  let cam := Camera.default aspectRatio
+  /-
+  let R := Float.cos (Float.pi / 4)
+  let world : List Hittable := [
+    mkSphere (Vec3.mk (-R) 0 (-1)) R material_blue,
+    mkSphere (Vec3.mk R 0 (-1)) R material_red
+  ]-/
 
-  IO.println s!"{Float.clampToUInt8 256}"
-  IO.FS.withFile filename IO.FS.Mode.write λ handle => do
-    handle.putStrLn "P3"
-    handle.putStrLn s!"{width} {height} 255"
+  let lookFrom : Vec3 Float := ⟨3, 3, 2⟩
+  let lookAt : Vec3 Float := ⟨0, 0, -1⟩
+  let vup : Vec3 Float := ⟨0, 1, 0⟩
+  let distToFocus := (lookFrom - lookAt).length
+  let aperture := 2.0
+  let cam := Camera.default lookFrom lookAt vup 20.0 aspectRatio aperture distToFocus
+
+  let renderTask (showProgress := false) : IO (Array (Color Float)) := do
+    let mut pixels : Array (Color Float) := Array.empty
     for j' in [0:height] do
-      IO.println s!"line {j'+1} of {height}"
+      if showProgress then
+        IO.println s!"line {j'+1} of {height}"
       let j := height - j' - 1
       for i in [0:width] do
         let mut pixelColor := Color.black
         for s in [0:samplesPerPixel] do
           let u := (Float.ofNat i + (← IO.randFloat))/ Float.ofNat width
           let v := (Float.ofNat j + (← IO.randFloat))/ Float.ofNat height
-          let ray := cam.getRay u v
+          let ray ← cam.getRay u v
           pixelColor := pixelColor + (← rayColor world ray maxDepth)
-        handle.writeColor (pixelColor / Float.ofNat samplesPerPixel)
+        pixels := pixels.push pixelColor
+    return pixels
+
+  IO.println s!"Starting {numThreads} threads."
+  let mut tasks := Array.empty
+  for i in [0:numThreads] do
+    tasks := tasks.push (← IO.asTask (renderTask (i = 0)))
+  let mut pixels : Array (Color Float) := Array.mkArray (height * width) Color.black
+
+  for t in tasks do
+    let pixels' ← (IO.ofExcept (← IO.wait t))
+    let pixels'' := pixels
+    for i in [0:height*width] do
+      pixels := pixels.set! i (pixels'[i] + pixels''[i])
+
+  IO.println s!"Writing to {filename}"
+ 
+  IO.FS.withFile filename IO.FS.Mode.write λ handle => do
+    handle.putStrLn "P3"
+    handle.putStrLn s!"{width} {height} 255"
+    for i in [0:height*width] do
+      let pixel := pixels[i]
+      handle.writeColor (pixel / Float.ofNat (samplesPerPixel * numThreads))
 
 def main : List String → IO Unit
 | [] => writeTestImage "out.ppm"
