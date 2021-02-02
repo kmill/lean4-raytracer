@@ -223,7 +223,11 @@ typedef struct Material_dielectric {
 typedef struct Material_sky {
 } Material_sky;
 
-enum Material_type { LAMBERTIAN, METAL, DIELECTRIC, SKY };
+typedef struct Material_emitter {
+  Color color;
+} Material_emitter;
+
+enum Material_type { LAMBERTIAN, METAL, DIELECTRIC, SKY, EMITTER };
 
 typedef struct Material {
   enum Material_type type;
@@ -232,6 +236,7 @@ typedef struct Material {
     Material_metal metal;
     Material_dielectric dielectric;
     Material_sky sky;
+    Material_emitter emitter;
   };
 } Material;
 
@@ -247,6 +252,11 @@ void Material_make_metal(Material *mat, Color albedo, double fuzz) {
 void Material_make_dielectric(Material *mat, double index_of_refraction) {
   mat->type = DIELECTRIC;
   mat->dielectric.index_of_refraction = index_of_refraction;
+}
+
+void Material_make_emitter(Material *mat, Color color) {
+  mat->type = EMITTER;
+  mat->emitter.color = color;
 }
 
 Material const material_sky = (Material){ .type=SKY, .sky={} };
@@ -347,6 +357,12 @@ void Material_sky_scatter(Ray const *ray, MaterialResponse *response) {
                                   Vec3_scale(t, (Color){0.5, 0.7, 1.0}));
 }
 
+void Material_emitter_scatter(Material_emitter const *mat, MaterialResponse *response) {
+  response->type = EMIT;
+  response->emit.color = mat->color;
+}
+
+
 void Material_scatter(HitRecord const *hitrec, Rand *rand, Ray const *ray,
                       MaterialResponse *response) {
   Material const* mat = hitrec->mat;
@@ -362,6 +378,9 @@ void Material_scatter(HitRecord const *hitrec, Rand *rand, Ray const *ray,
     return;
   case SKY:
     Material_sky_scatter(ray, response);
+    return;
+  case EMITTER:
+    Material_emitter_scatter(&mat->emitter, response);
     return;
   default:
     error("Unknown material type");
@@ -487,7 +506,7 @@ void write_color(FILE *f, Color c) {
           clamp_to_uint8_t(sqrt(c.z)));
 }
 
-void random_scene(Rand *rand, int *nobj, Hittable **world) {
+void random_scene(Rand *rand, int *nobj, Hittable **world, float aspect_ratio, Camera *cam) {
   Material *mats = malloc(1000 * sizeof(Material));
   int n_mat = 0;
   Hittable *objs = malloc(1000 * sizeof(Hittable));
@@ -496,44 +515,109 @@ void random_scene(Rand *rand, int *nobj, Hittable **world) {
   Material *mat_glass = &mats[n_mat++];
   Material_make_dielectric(mat_glass, 1.5);
 
-  // Ground
-  Material *ground_mat = &mats[n_mat++];
-  Material_make_lambertian(ground_mat, (Color){0.5, 0.5, 0.5});
-  make_sphere(&objs[n_obj++], (Vec3){0, -1000, 0}, 1000, ground_mat);
+  if (0) {
+    Vec3 look_from = (Vec3){13, 2, 3};
+    Vec3 look_at = (Vec3){0, 0, 0};
+    Vec3 vup = (Vec3){0, 1, 0};
+    double dist_to_focus = 10;
+    double aperture = 0.1;
+    Camera_default(cam,
+                   look_from, look_at, vup,
+                   20.0, aspect_ratio, aperture, dist_to_focus);
 
-  for (int a = -11; a < 11; a++) {
-    for (int b = -11; b < 11; b++) {
-      Vec3 center = (Vec3) {a + 0.9 * Rand_unif(rand), 0.2, b + 0.9 * Rand_unif(rand)};
-      if (Vec3_length(Vec3_sub(center, (Vec3){4, 0.2, 0})) > 0.9) {
-        double choose_mat = Rand_unif(rand);
-        if (choose_mat < 0.9) {
-          Color albedo = Vec3_mul(Rand_Vec3_range(rand, 0, 1), Rand_Vec3_range(rand, 0, 1));
-          Material *mat = &mats[n_mat++];
-          Material_make_lambertian(mat, albedo);
-          make_sphere(&objs[n_obj++], center, 0.2, mat);
-        } else if (choose_mat < 0.95) {
-          Color albedo = Rand_Vec3_range(rand, 0.5, 1);
-          double fuzz = Rand_unif_range(rand, 0, 0.5);
-          Material *mat = &mats[n_mat++];
-          Material_make_metal(mat, albedo, fuzz);
-          make_sphere(&objs[n_obj++], center, 0.2, mat);
-        } else {
-          make_sphere(&objs[n_obj++], center, 0.2, mat_glass);
+    // Ground
+    Material *ground_mat = &mats[n_mat++];
+    Material_make_lambertian(ground_mat, (Color){0.5, 0.5, 0.5});
+    make_sphere(&objs[n_obj++], (Vec3){0, -1000, 0}, 1000, ground_mat);
+
+    for (int a = -11; a < 11; a++) {
+      for (int b = -11; b < 11; b++) {
+        Vec3 center = (Vec3) {a + 0.9 * Rand_unif(rand), 0.2, b + 0.9 * Rand_unif(rand)};
+        if (Vec3_length(Vec3_sub(center, (Vec3){4, 0.2, 0})) > 0.9) {
+          double choose_mat = Rand_unif(rand);
+          if (choose_mat < 0.9) {
+            Color albedo = Vec3_mul(Rand_Vec3_range(rand, 0, 1), Rand_Vec3_range(rand, 0, 1));
+            Material *mat = &mats[n_mat++];
+            Material_make_lambertian(mat, albedo);
+            make_sphere(&objs[n_obj++], center, 0.2, mat);
+          } else if (choose_mat < 0.95) {
+            Color albedo = Rand_Vec3_range(rand, 0.5, 1);
+            double fuzz = Rand_unif_range(rand, 0, 0.5);
+            Material *mat = &mats[n_mat++];
+            Material_make_metal(mat, albedo, fuzz);
+            make_sphere(&objs[n_obj++], center, 0.2, mat);
+          } else {
+            make_sphere(&objs[n_obj++], center, 0.2, mat_glass);
+          }
         }
       }
     }
-  }
   
-  // 3 big spheres
-  make_sphere(&objs[n_obj++], (Vec3){0, 1, 0}, 1, mat_glass);
+    // 3 big spheres
+    make_sphere(&objs[n_obj++], (Vec3){0, 1, 0}, 1, mat_glass);
 
-  Material *mat_lambert = &mats[n_mat++];
-  Material_make_lambertian(mat_lambert, (Color){0.4, 0.2, 0.1});
-  make_sphere(&objs[n_obj++], (Vec3){-4, 1, 0}, 1, mat_lambert);
+    Material *mat_lambert = &mats[n_mat++];
+    Material_make_lambertian(mat_lambert, (Color){0.4, 0.2, 0.1});
+    make_sphere(&objs[n_obj++], (Vec3){-4, 1, 0}, 1, mat_lambert);
 
-  Material *mat_metal = &mats[n_mat++];
-  Material_make_metal(mat_metal, (Color){0.7, 0.6, 0.5}, 0);
-  make_sphere(&objs[n_obj++], (Vec3){4, 1, 0}, 1, mat_metal);
+    Material *mat_metal = &mats[n_mat++];
+    Material_make_metal(mat_metal, (Color){0.7, 0.6, 0.5}, 0);
+    make_sphere(&objs[n_obj++], (Vec3){4, 1, 0}, 1, mat_metal);
+  } else {
+    Vec3 look_from = (Vec3){1, 1, 1};
+    Vec3 look_at = (Vec3){0, 0, 0};
+    Vec3 vup = (Vec3){0, 1, 0};
+    double dist_to_focus = 10;
+    double aperture = 0.00001;
+    Camera_default(cam,
+                   look_from, look_at, vup,
+                   50.0, aspect_ratio, aperture, dist_to_focus);
+
+    Material *metal1 = &mats[n_mat++];
+    Material *metal2 = &mats[n_mat++];
+    Material *metal3 = &mats[n_mat++];
+    Material *metal4 = &mats[n_mat++];
+    Material_make_metal(metal1, (Color){1.0, 0.7, 0.7}, 0.03);
+    Material_make_metal(metal2, (Color){0.7, 1.0, 0.7}, 0.03);
+    Material_make_metal(metal3, (Color){0.7, 0.7, 1.0}, 0.03);
+    Material_make_metal(metal4, (Color){0.9, 0.9, 0.7}, 0.03);
+    Material *metals[4] = {metal1, metal2, metal3, metal4};
+    Material *mat_light = &mats[n_mat++];
+    Material_make_emitter(mat_light, Vec3_scale(3, (Color){1.0, 0.95, 0.9}));
+    double r = sqrt(2)/2;
+    for (int i = 0; i < 5; i++) {
+      for (int j = 0; j < 5; j++) {
+        for (int k = 0; k < 5; k++) {
+          if ((i + j + k) % 2 == 0) {
+            int color = 2*(i % 2) + (j % 2);
+            make_sphere(&objs[n_obj++], (Vec3){i-2, j-2, k-2}, r, metals[color]);
+          } else {
+            make_sphere(&objs[n_obj++], (Vec3){i-2, j-2, k-2}, 0.2, mat_glass);
+            make_sphere(&objs[n_obj++], (Vec3){i-2-0.5, j-2-0.5, k-2-0.5}, 0.05, mat_light);
+          }
+        }
+      }
+    }
+
+    Material *mat_blackest = &mats[n_mat++];
+    Material_make_emitter(mat_blackest, (Color){0.0, 0.0, 0.0});
+    //    make_sphere(&objs[n_obj++], (Vec3){0, 0, 0}, -1000, mat_blackest);
+    /*    make_sphere(&objs[n_obj++], (Vec3){0, 0, 0}, r, metals[0]);
+    make_sphere(&objs[n_obj++], (Vec3){0, 1, 1}, r, metals[1]);
+    make_sphere(&objs[n_obj++], (Vec3){1, 0, 1}, r, metals[2]);
+    make_sphere(&objs[n_obj++], (Vec3){1, 1, 0}, r, metals[3]);*/
+    /*
+    for (int k = -2; k <= 1; k++) {
+      for (int i = -3; i < 3; i++) {
+        for (int j = -3; j < 3; j++) {
+          float x = i + j /2.0;
+          float z = j * sqrt(3)/2;
+          make_sphere(&objs[n_obj++], (Vec3){x, 0, z}, 0.5, metals[(333 + i + j)%4]);
+        }
+      }
+    }
+    */
+  }
 
   printf("%d objects, %d materials\n", n_obj, n_mat);
 
@@ -583,36 +667,33 @@ void write_test_image(const char *filename) {
   double aspect_ratio = 3.0 / 2.0;
   int width = 500;
   int height = (int)(width / aspect_ratio);
-  int samples_per_pixel = 10;
-  int max_depth = 30;
-  int num_threads = 8;
+  int samples_per_pixel = 160;
+  int max_depth = 100;
+  int num_threads = 16;
 
   Rand rand;
   Rand_init(&rand, 0, 0);
 
   Hittable *world;
   int nobj;
-  random_scene(&rand, &nobj, &world);
-
-  Vec3 look_from = (Vec3){13, 2, 3};
-  Vec3 look_at = (Vec3){0, 0, 0};
-  Vec3 vup = (Vec3){0, 1, 0};
-  double dist_to_focus = 10;
-  double aperture = 0.1;
   Camera cam;
-  Camera_default(&cam,
-                 look_from, look_at, vup,
-                 20.0, aspect_ratio, aperture, dist_to_focus);
+  random_scene(&rand, &nobj, &world, aspect_ratio, &cam);
 
   printf("Starting %d threads.\n", num_threads);
 
   pthread_t threads[num_threads];
 
+  int check_samples = 0;
+
   for (int i = 0; i < num_threads; i++) {
     struct RenderData *rd = malloc(sizeof(struct RenderData));
     rd->width = width;
     rd->height = height;
-    rd->samples_per_pixel = samples_per_pixel;
+    rd->samples_per_pixel = samples_per_pixel/num_threads;
+    if (i < samples_per_pixel % num_threads) {
+      rd->samples_per_pixel++;
+    }
+    check_samples += rd->samples_per_pixel;
     rd->max_depth = max_depth;
     rd->pixels = malloc(height * width * sizeof(Color));
     rd->cam = &cam;
@@ -622,6 +703,7 @@ void write_test_image(const char *filename) {
     rd->show_progress = (i == 0);
     pthread_create(&threads[i], NULL, &render_task, (void*)rd);
   }
+  printf("(with %d total samples per pixel between them)\n", check_samples);
 
   Color *pixels = malloc(height * width * sizeof(Color));
   for (int i = 0; i < height * width; i++) {
@@ -643,7 +725,7 @@ void write_test_image(const char *filename) {
   FILE *f = fopen(filename, "w");
   fprintf(f, "P3\n%d %d 255\n", width, height);
   for (int i = 0; i < width * height; i++) {
-    write_color(f, Vec3_scale(1.0 / (samples_per_pixel * num_threads), pixels[i]));
+    write_color(f, Vec3_scale(1.0 / samples_per_pixel, pixels[i]));
   }
   fclose(f);
   free(pixels);
