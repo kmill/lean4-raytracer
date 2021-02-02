@@ -33,4 +33,4 @@ This is not a fair comparison because I spent almost no time thinking about opti
 
 The first test image in C took 20 seconds with the same configuration, and the second test image took 3 minutes 30 seconds with the same configuration.  This means my Lean program takes about 32x as long to run as the C version.
 
-Writing the Lean program more like the C program would likely make it run significantly faster.
+The [optimize-lean](https://github.com/kmill/lean4-raytracer/tree/optimize-lean) branch has a more optimized version of the Lean code, and it runs in about 25% less time (so 7.5 minutes for the first test configuration).
