@@ -180,42 +180,26 @@ void Camera_default(Camera *cam,
   cam->lens_radius = aperture / 2;
 }
 
-void Camera_get_ray(Camera const *cam, Rand *rand, double s, double t, Ray *ray) {
+Ray Camera_get_ray(Camera const *cam, Rand *rand, double s, double t) {
   Vec3 rd = Vec3_scale(cam->lens_radius, Rand_Vec3_in_unit_disk(rand));
   Vec3 offset = Vec3_add(Vec3_scale(rd.x, cam->u), Vec3_scale(rd.y, cam->v));
-  ray->origin = Vec3_add(cam->origin, offset);
-  ray->dir = Vec3_sub(Vec3_add(cam->lower_left_corner,
+  Ray ray;
+  ray.origin = Vec3_add(cam->origin, offset);
+  ray.dir = Vec3_sub(Vec3_add(cam->lower_left_corner,
                                Vec3_add(Vec3_scale(s, cam->horizontal),
                                         Vec3_scale(t, cam->vertical))),
-                      ray->origin);
+                      ray.origin);
+  return ray;
 }
 
-typedef struct HitRecord {
-  Vec3 p;
-  double t;
-  Vec3 normal;
-  bool front_face;
-} HitRecord;
-
-/* Given a HitRecord with p and t set, set normal and front_face */
-void HitRecord_set_normal(HitRecord *hit, Ray const *ray, Vec3 outward_normal) {
-  hit->front_face = Vec3_dot(ray->dir, outward_normal) < 0.0;
-  hit->normal = hit->front_face ? outward_normal : Vec3_scale(-1, outward_normal);
-}
-
-void HitRecord_init_from(HitRecord *dest, HitRecord const *src) {
-  dest->p = src->p;
-  dest->t = src->t;
-  dest->normal = src->normal;
-  dest->front_face = src->front_face;
-}
-
-enum MaterialResponse_type { ABSORB, SCATTER };
+enum MaterialResponse_type { EMIT, SCATTER };
 
 typedef struct MaterialResponse {
   enum MaterialResponse_type type;
   union {
-    struct {} absorb;
+    struct {
+      Color color;
+    } emit;
     struct {
       Color albedo;
       Ray scattered;
@@ -236,7 +220,10 @@ typedef struct Material_dielectric {
   double index_of_refraction;
 } Material_dielectric;
 
-enum Material_type { LAMBERTIAN, METAL, DIELECTRIC };
+typedef struct Material_sky {
+} Material_sky;
+
+enum Material_type { LAMBERTIAN, METAL, DIELECTRIC, SKY };
 
 typedef struct Material {
   enum Material_type type;
@@ -244,6 +231,7 @@ typedef struct Material {
     Material_lambertian lambertian;
     Material_metal metal;
     Material_dielectric dielectric;
+    Material_sky sky;
   };
 } Material;
 
@@ -260,6 +248,31 @@ void Material_make_dielectric(Material *mat, double index_of_refraction) {
   mat->type = DIELECTRIC;
   mat->dielectric.index_of_refraction = index_of_refraction;
 }
+
+Material const material_sky = (Material){ .type=SKY, .sky={} };
+
+typedef struct HitRecord {
+  Vec3 p;
+  double t;
+  Material const *mat;
+  Vec3 normal;
+  bool front_face;
+} HitRecord;
+
+/* Given a HitRecord with p and t set, set normal and front_face */
+void HitRecord_set_normal(HitRecord *hit, Ray const *ray, Vec3 outward_normal) {
+  hit->front_face = Vec3_dot(ray->dir, outward_normal) < 0.0;
+  hit->normal = hit->front_face ? outward_normal : Vec3_scale(-1, outward_normal);
+}
+
+void HitRecord_init_from(HitRecord *dest, HitRecord const *src) {
+  dest->p = src->p;
+  dest->t = src->t;
+  dest->mat = src->mat;
+  dest->normal = src->normal;
+  dest->front_face = src->front_face;
+}
+
 
 void Material_lambertian_scatter(Material_lambertian const *mat,
                                  Rand *rand, Ray const *ray, HitRecord const *hitrec,
@@ -286,7 +299,8 @@ void Material_metal_scatter(Material_metal const *mat,
     response->scatter.scattered.origin = hitrec->p;
     response->scatter.scattered.dir = scattered_dir;
   } else {
-    response->type = ABSORB;
+    response->type = EMIT;
+    response->emit.color = Color_black;
   }
 }
 
@@ -325,9 +339,17 @@ void Material_dielectric_scatter(Material_dielectric const *mat,
   response->scatter.scattered.dir = direction;
 }
 
-void Material_scatter(Material const *mat,
-                      Rand *rand, Ray const *ray, HitRecord const *hitrec,
+void Material_sky_scatter(Ray const *ray, MaterialResponse *response) {
+  Vec3 unit = Vec3_normalized(ray->dir);
+  double t = 0.5 * (unit.y + 1.0);
+  response->type = EMIT;
+  response->emit.color = Vec3_add(Vec3_scale(1.0 - t, Color_white),
+                                  Vec3_scale(t, (Color){0.5, 0.7, 1.0}));
+}
+
+void Material_scatter(HitRecord const *hitrec, Rand *rand, Ray const *ray,
                       MaterialResponse *response) {
+  Material const* mat = hitrec->mat;
   switch (mat->type) {
   case LAMBERTIAN:
     Material_lambertian_scatter(&mat->lambertian, rand, ray, hitrec, response);
@@ -337,6 +359,9 @@ void Material_scatter(Material const *mat,
     return;
   case DIELECTRIC:
     Material_dielectric_scatter(&mat->dielectric, rand, ray, hitrec, response);
+    return;
+  case SKY:
+    Material_sky_scatter(ray, response);
     return;
   default:
     error("Unknown material type");
@@ -358,34 +383,35 @@ typedef struct Hittable {
   };
 } Hittable;
 
-bool Hittable_sphere_hit(Hittable_sphere const *sphere,
-                         Ray const *ray, double tmin, double tmax,
-                         HitRecord *hitrec, Material const **mat) {
+/* It is up to the object to update the hitrecord if it's a better hit */
+void Hittable_sphere_hit(Hittable_sphere const *sphere,
+                         Ray const *ray, double tmin,
+                         HitRecord *hitrec) {
   Vec3 oc = Vec3_sub(ray->origin, sphere->center);
   double a = Vec3_length_squared(ray->dir);
   double halfb = Vec3_dot(oc, ray->dir);
   double c = Vec3_length_squared(oc) - sphere->radius * sphere->radius;
   double discr = halfb * halfb - a * c;
   if (discr < 0.0) {
-    return false;
+    return;
   }
   double sqrtd = sqrt(discr);
   /* Find the nearest root that lies in the acceptable range */
   double root = (-halfb - sqrtd) / a;
-  if (root < tmin || tmax < root) {
+  if (root < tmin || hitrec->t < root) {
     root = (-halfb + sqrtd) / a;
-    if (root < tmin || tmax < root) {
-      return false;
+    if (root < tmin || hitrec->t < root) {
+      return;
     }
   }
   double t = root;
   Vec3 p = Ray_at(ray, t);
   Vec3 outward_normal = Vec3_scale(1/sphere->radius, Vec3_sub(p, sphere->center));
-  *mat = sphere->mat;
   hitrec->p = p;
   hitrec->t = t;
+  hitrec->mat = sphere->mat;
   HitRecord_set_normal(hitrec, ray, outward_normal);
-  return true;
+  return;
 }
 
 void make_sphere(Hittable *obj, Vec3 center, double radius, Material const *mat) {
@@ -395,61 +421,50 @@ void make_sphere(Hittable *obj, Vec3 center, double radius, Material const *mat)
   obj->sphere.mat = mat;
 }
 
-bool Hittable_hit(Hittable const *obj,
-                  Ray const *ray, double tmin, double tmax,
-                  HitRecord *hitrec, Material const **mat) {
+void Hittable_hit(Hittable const *obj,
+                  Ray const *ray, double tmin,
+                  HitRecord *hitrec) {
   switch (obj->type) {
   case SPHERE:
-    return Hittable_sphere_hit(&obj->sphere, ray, tmin, tmax, hitrec, mat);
+    Hittable_sphere_hit(&obj->sphere, ray, tmin, hitrec);
+    return;
   default:
     error("Unknown hittable type");
   }
 }
 
-bool hit_list(int nobj, Hittable const *obj_list,
+void hit_list(int nobj, Hittable const *obj_list,
               Ray const *ray, double tmin, double tmax,
-              HitRecord *hitrec, Material const **mat) {
+              HitRecord *hitrec) {
   hitrec->p = ray->origin;
   hitrec->t = tmax;
-  HitRecord curr_hitrec;
-  Material const *curr_mat = NULL;
-  bool did_hit = false;
+  hitrec->mat = &material_sky;
   for (int i = 0; i < nobj; i++) {
-    if (Hittable_hit(&obj_list[i], ray, tmin, hitrec->t, &curr_hitrec, &curr_mat)) {
-      did_hit = true;
-      HitRecord_init_from(hitrec, &curr_hitrec);
-      *mat = curr_mat;
-    }
+    Hittable_hit(&obj_list[i], ray, tmin, hitrec);
   }
-  return did_hit;
 }
 
 Vec3 ray_color(int nobj, Hittable const *obj_list,
-               Ray const *ray, Rand *rand,
+               Ray ray, Rand *rand,
                int depth) {
-  if (depth <= 0) {
-    return Color_black;
-  }
   HitRecord hitrec;
-  Material const *mat = NULL;
-  if (hit_list(nobj, obj_list, ray, 0.001, INFINITY, &hitrec, &mat)) {
-    MaterialResponse response;
-    Material_scatter(mat, rand, ray, &hitrec, &response);
+  MaterialResponse response;
+  Color acc = Color_white;
+  for (int i = 0; i < depth; i++) {
+    hit_list(nobj, obj_list, &ray, 0.001, INFINITY, &hitrec);
+    Material_scatter(&hitrec, rand, &ray, &response);
     switch (response.type) {
-    case ABSORB:
-      return Color_black;
+    case EMIT:
+      return Vec3_mul(acc, response.emit.color);
     case SCATTER:
-      return Vec3_mul(response.scatter.albedo,
-                      ray_color(nobj, obj_list, &response.scatter.scattered, rand, depth - 1));
+      acc = Vec3_mul(acc, response.scatter.albedo);
+      ray = response.scatter.scattered;
+      break;
     default:
       error("Unknown material response type");
     }
-  } else {
-    Vec3 unit = Vec3_normalized(ray->dir);
-    double t = 0.5 * (unit.y + 1.0);
-    return Vec3_add(Vec3_scale(1.0 - t, Color_white),
-                    Vec3_scale(t, (Color){0.5, 0.7, 1.0}));
   }
+  return Color_black;
 }
 
 /* Takes a floating-point number with [0,1) mapped to [0,256).  Clamps result to 0-255. */
@@ -552,9 +567,8 @@ void *render_task(void *arg) {
       for (int s = 0; s < rd->samples_per_pixel; s++) {
         double u = (i + Rand_unif(&rand)) / rd->width;
         double v = (j + Rand_unif(&rand)) / rd->height;
-        Ray ray;
-        Camera_get_ray(rd->cam, &rand, u, v, &ray);
-        Color rc = ray_color(rd->nobj, rd->world, &ray, &rand, rd->max_depth);
+        Ray ray = Camera_get_ray(rd->cam, &rand, u, v);
+        Color rc = ray_color(rd->nobj, rd->world, ray, &rand, rd->max_depth);
         //Color rc = (Color){(double)i/width, (double)j/height, 0.25};
         pixel_color = Vec3_add(pixel_color, rc);
       }
@@ -569,7 +583,7 @@ void write_test_image(const char *filename) {
   double aspect_ratio = 3.0 / 2.0;
   int width = 500;
   int height = (int)(width / aspect_ratio);
-  int samples_per_pixel = 80;
+  int samples_per_pixel = 10;
   int max_depth = 30;
   int num_threads = 8;
 
