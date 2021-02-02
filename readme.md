@@ -26,6 +26,8 @@ $ leanpkg build build/bin/render && time ./build/bin/render test.ppm
 ```
 The rendering settings are hard-coded in `writeTestImage` in `render.lean`.
 
+(Note: I was told that you might need to `leanmake bin PKG=render` before building.)
+
 ## C benchmark
 
 The `c` folder contains an implementation of the raytracer in C, hand translated from Lean using C idioms.
