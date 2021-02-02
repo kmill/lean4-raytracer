@@ -1,5 +1,9 @@
 # Simple raytracer in Lean 4
 
+**Note.** This is a branch experimenting with a faster version of the ray tracer.  It currently runs in about 75% the time.
+
+## Background
+
 [Lean 4](https://github.com/leanprover/lean4) is a dependently typed programming language, and 
 it can be used both as a proof assistant and for practical programs.
 
