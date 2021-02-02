@@ -2,6 +2,10 @@
 
 **Note.** This is a branch experimenting with a faster version of the ray tracer.  It currently runs in about 75% the time.
 
+It also has a faster version of the C raytracer.  It took 1 hour 18 minutes to render
+[this arrangement of reflective metal balls](https://github.com/kmill/lean4-raytracer/blob/optimize-lean/c/fractal4.png?raw=true)
+with emissive light sources wrapped in glass. (Configuration in [this commit](https://github.com/kmill/lean4-raytracer/commit/0e7252ee673c271835becefe9ce0abe81fc1cec5).)
+
 ## Background
 
 [Lean 4](https://github.com/leanprover/lean4) is a dependently typed programming language, and 
