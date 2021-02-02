@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include <errno.h>
 #include <signal.h>
+#include <pthread.h>
 
 // Halts the program, printing an error message.
 #define error(...) do {                                              \
@@ -525,13 +526,52 @@ void random_scene(Rand *rand, int *nobj, Hittable **world) {
   *world = objs;
 }
 
+struct RenderData {
+  int width, height;
+  int samples_per_pixel;
+  int max_depth;
+  Color *pixels;
+  Camera *cam;
+  Hittable *world;
+  int nobj;
+  Rand rand;
+  bool show_progress;
+};
+
+void *render_task(void *arg) {
+  struct RenderData const *rd = arg;
+  Rand rand = rd->rand;
+
+  for (int line = 0; line < rd->height; line++) {
+    if (rd->show_progress) {
+      printf("line %d of %d\n", line+1, rd->height);
+    }
+    int j = rd->height - line - 1;
+    for (int i = 0; i < rd->width; i++) {
+      Color pixel_color = Color_black;
+      for (int s = 0; s < rd->samples_per_pixel; s++) {
+        double u = (i + Rand_unif(&rand)) / rd->width;
+        double v = (j + Rand_unif(&rand)) / rd->height;
+        Ray ray;
+        Camera_get_ray(rd->cam, &rand, u, v, &ray);
+        Color rc = ray_color(rd->nobj, rd->world, &ray, &rand, rd->max_depth);
+        //Color rc = (Color){(double)i/width, (double)j/height, 0.25};
+        pixel_color = Vec3_add(pixel_color, rc);
+      }
+      rd->pixels[line * rd->width + i] = pixel_color;
+    }
+  }
+
+  return arg;
+}
+
 void write_test_image(const char *filename) {
   double aspect_ratio = 3.0 / 2.0;
   int width = 500;
   int height = (int)(width / aspect_ratio);
-  int samples_per_pixel = 10;
+  int samples_per_pixel = 80;
   int max_depth = 30;
-  int num_threads = 1;
+  int num_threads = 8;
 
   Rand rand;
   Rand_init(&rand, 0, 0);
@@ -550,23 +590,39 @@ void write_test_image(const char *filename) {
                  look_from, look_at, vup,
                  20.0, aspect_ratio, aperture, dist_to_focus);
 
+  printf("Starting %d threads.\n", num_threads);
+
+  pthread_t threads[num_threads];
+
+  for (int i = 0; i < num_threads; i++) {
+    struct RenderData *rd = malloc(sizeof(struct RenderData));
+    rd->width = width;
+    rd->height = height;
+    rd->samples_per_pixel = samples_per_pixel;
+    rd->max_depth = max_depth;
+    rd->pixels = malloc(height * width * sizeof(Color));
+    rd->cam = &cam;
+    rd->world = world;
+    rd->nobj = nobj;
+    Rand_split(&rand, &rd->rand);
+    rd->show_progress = (i == 0);
+    pthread_create(&threads[i], NULL, &render_task, (void*)rd);
+  }
+
   Color pixels[height * width];
-  for (int line = 0; line < height; line++) {
-    printf("line %d of %d\n", line+1, height);
-    int j = height - line - 1;
-    for (int i = 0; i < width; i++) {
-      Color pixel_color = Color_black;
-      for (int s = 0; s < samples_per_pixel; s++) {
-        double u = (i + Rand_unif(&rand)) / width;
-        double v = (j + Rand_unif(&rand)) / height;
-        Ray ray;
-        Camera_get_ray(&cam, &rand, u, v, &ray);
-        Color rc = ray_color(nobj, world, &ray, &rand, max_depth);
-        //Color rc = (Color){(double)i/width, (double)j/height, 0.25};
-        pixel_color = Vec3_add(pixel_color, rc);
-      }
-      pixels[line * width + i] = pixel_color;
+  for (int i = 0; i < height * width; i++) {
+    pixels[i] = Color_black;
+  }
+
+  for (int i = 0; i < num_threads; i++) {
+    struct RenderData *rd = NULL;
+    pthread_join(threads[i], (void **)&rd);
+    Color *new_pixels = rd->pixels;
+    for (int i = 0; i < height * width; i++) {
+      pixels[i] = Vec3_add(pixels[i], new_pixels[i]);
     }
+    free(new_pixels);
+    free(rd);
   }
   
   printf("Writing to %s\n", filename);
