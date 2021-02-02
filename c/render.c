@@ -116,19 +116,18 @@ Vec3 Rand_Vec3_range(Rand *r, double lo, double hi) {
 
 /* Gives a vector with length less than 1 uniformly at random. */
 Vec3 Rand_Vec3_in_unit_sphere(Rand *r) {
-  for (int i = 0; i < 100; i++) { // 7e-33 probability of failure
+  while (1) {
     Vec3 v = Rand_Vec3_range(r, -1, 1);
     if (Vec3_length_squared(v) < 1.0) {
       return v;
     }
   }
-  return (Vec3){1, 0, 0};
 }
 
 /* Gives a vector in the XY unit disk with length less than 1 uniformly at random. */
 Vec3 Rand_Vec3_in_unit_disk(Rand *r) {
   double x, y;
-  for (int i = 0; i < 100; i++) { // 2e-67 probability of failure
+  while (1) {
     x = Rand_unif_range(r, -1, 1);
     y = Rand_unif_range(r, -1, 1);
     Vec3 v = (Vec3){x, y, 0};
@@ -136,11 +135,11 @@ Vec3 Rand_Vec3_in_unit_disk(Rand *r) {
       return v;
     }
   }
-  return (Vec3){0, 0, 0};
 }
 
 typedef struct Ray {
-  Vec3 origin, dir;
+  Vec3 origin;
+  Vec3 dir; /* unit vector */
 } Ray;
 
 Vec3 Ray_at(Ray const *r, double t) {
@@ -185,10 +184,10 @@ Ray Camera_get_ray(Camera const *cam, Rand *rand, double s, double t) {
   Vec3 offset = Vec3_add(Vec3_scale(rd.x, cam->u), Vec3_scale(rd.y, cam->v));
   Ray ray;
   ray.origin = Vec3_add(cam->origin, offset);
-  ray.dir = Vec3_sub(Vec3_add(cam->lower_left_corner,
-                               Vec3_add(Vec3_scale(s, cam->horizontal),
-                                        Vec3_scale(t, cam->vertical))),
-                      ray.origin);
+  ray.dir = Vec3_normalized(Vec3_sub(Vec3_add(cam->lower_left_corner,
+                                              Vec3_add(Vec3_scale(s, cam->horizontal),
+                                                       Vec3_scale(t, cam->vertical))),
+                                     ray.origin));
   return ray;
 }
 
@@ -291,6 +290,8 @@ void Material_lambertian_scatter(Material_lambertian const *mat,
   Vec3 scatter_dir = Vec3_add(hitrec->normal, Vec3_normalized(Rand_Vec3_in_unit_sphere(rand)));
   if (Vec3_near_zero(scatter_dir)) {
     scatter_dir = hitrec->normal;
+  } else {
+    scatter_dir = Vec3_normalized(scatter_dir);
   }
   response->type = SCATTER;
   response->scatter.albedo = mat->albedo;
@@ -301,13 +302,13 @@ void Material_lambertian_scatter(Material_lambertian const *mat,
 void Material_metal_scatter(Material_metal const *mat,
                             Rand *rand, Ray const *ray, HitRecord const *hitrec,
                             MaterialResponse *response) {
-  Vec3 reflected = Vec3_reflect(Vec3_normalized(ray->dir), hitrec->normal);
+  Vec3 reflected = Vec3_reflect(ray->dir, hitrec->normal);
   Vec3 scattered_dir = Vec3_add(reflected, Vec3_scale(mat->fuzz, Rand_Vec3_in_unit_sphere(rand)));
   if (Vec3_dot(scattered_dir, hitrec->normal) > 0.0) {
     response->type = SCATTER;
     response->scatter.albedo = mat->albedo;
     response->scatter.scattered.origin = hitrec->p;
-    response->scatter.scattered.dir = scattered_dir;
+    response->scatter.scattered.dir = Vec3_normalized(scattered_dir);
   } else {
     response->type = EMIT;
     response->emit.color = Color_black;
@@ -327,8 +328,7 @@ void Material_dielectric_scatter(Material_dielectric const *mat,
                                  Rand *rand, Ray const *ray, HitRecord const *hitrec,
                                  MaterialResponse *response) {
   double refraction_ratio = hitrec->front_face ? 1.0 / mat->index_of_refraction : mat->index_of_refraction;
-  Vec3 unit_dir = Vec3_normalized(ray->dir);
-  double cos_theta = fmin(-Vec3_dot(unit_dir, hitrec->normal), 1.0);
+  double cos_theta = fmin(-Vec3_dot(ray->dir, hitrec->normal), 1.0);
   double sin_theta = sqrt(1.0 - cos_theta * cos_theta);
   bool cannot_refract = refraction_ratio * sin_theta > 1.0;
 
@@ -339,9 +339,9 @@ void Material_dielectric_scatter(Material_dielectric const *mat,
 
   Vec3 direction;
   if (cannot_refract || reflectance > Rand_unif(rand)) {
-    direction = Vec3_reflect(unit_dir, hitrec->normal);
+    direction = Vec3_reflect(ray->dir, hitrec->normal);
   } else {
-    direction = Vec3_refract(unit_dir, hitrec->normal, refraction_ratio);
+    direction = Vec3_normalized(Vec3_refract(ray->dir, hitrec->normal, refraction_ratio));
   }
   response->type = SCATTER;
   response->scatter.albedo = Color_white;
@@ -350,7 +350,7 @@ void Material_dielectric_scatter(Material_dielectric const *mat,
 }
 
 void Material_sky_scatter(Ray const *ray, MaterialResponse *response) {
-  Vec3 unit = Vec3_normalized(ray->dir);
+  Vec3 unit = ray->dir;
   double t = 0.5 * (unit.y + 1.0);
   response->type = EMIT;
   response->emit.color = Vec3_add(Vec3_scale(1.0 - t, Color_white),
@@ -407,7 +407,7 @@ void Hittable_sphere_hit(Hittable_sphere const *sphere,
                          Ray const *ray, double tmin,
                          HitRecord *hitrec) {
   Vec3 oc = Vec3_sub(ray->origin, sphere->center);
-  double a = Vec3_length_squared(ray->dir);
+  double a = 1; // = Vec3_length_squared(ray->dir);
   double halfb = Vec3_dot(oc, ray->dir);
   double c = Vec3_length_squared(oc) - sphere->radius * sphere->radius;
   double discr = halfb * halfb - a * c;
@@ -564,10 +564,10 @@ void random_scene(Rand *rand, int *nobj, Hittable **world, float aspect_ratio, C
     Material_make_metal(mat_metal, (Color){0.7, 0.6, 0.5}, 0);
     make_sphere(&objs[n_obj++], (Vec3){4, 1, 0}, 1, mat_metal);
   } else {
-    Vec3 look_from = (Vec3){1, 1, 1};
-    Vec3 look_at = (Vec3){0, 0, 0};
+    Vec3 look_from = (Vec3){0.995, 0.97, 1};
+    Vec3 look_at = (Vec3){0.5, 0.5, 0.5};
     Vec3 vup = (Vec3){0, 1, 0};
-    double dist_to_focus = 10;
+    double dist_to_focus = Vec3_length(Vec3_sub(look_from, look_at));
     double aperture = 0.00001;
     Camera_default(cam,
                    look_from, look_at, vup,
@@ -577,13 +577,13 @@ void random_scene(Rand *rand, int *nobj, Hittable **world, float aspect_ratio, C
     Material *metal2 = &mats[n_mat++];
     Material *metal3 = &mats[n_mat++];
     Material *metal4 = &mats[n_mat++];
-    Material_make_metal(metal1, (Color){1.0, 0.7, 0.7}, 0.03);
-    Material_make_metal(metal2, (Color){0.7, 1.0, 0.7}, 0.03);
-    Material_make_metal(metal3, (Color){0.7, 0.7, 1.0}, 0.03);
-    Material_make_metal(metal4, (Color){0.9, 0.9, 0.7}, 0.03);
+    Material_make_metal(metal1, (Color){1.0, 0.7, 0.7}, 0.01);
+    Material_make_metal(metal2, (Color){0.7, 1.0, 0.7}, 0.01);
+    Material_make_metal(metal3, (Color){0.7, 0.7, 1.0}, 0.01);
+    Material_make_metal(metal4, (Color){0.9, 0.9, 0.7}, 0.01);
     Material *metals[4] = {metal1, metal2, metal3, metal4};
     Material *mat_light = &mats[n_mat++];
-    Material_make_emitter(mat_light, Vec3_scale(3, (Color){1.0, 0.95, 0.9}));
+    Material_make_emitter(mat_light, Vec3_scale(6, (Color){1.0, 0.95, 0.9}));
     double r = sqrt(2)/2;
     for (int i = 0; i < 5; i++) {
       for (int j = 0; j < 5; j++) {
@@ -593,7 +593,9 @@ void random_scene(Rand *rand, int *nobj, Hittable **world, float aspect_ratio, C
             make_sphere(&objs[n_obj++], (Vec3){i-2, j-2, k-2}, r, metals[color]);
           } else {
             make_sphere(&objs[n_obj++], (Vec3){i-2, j-2, k-2}, 0.2, mat_glass);
-            make_sphere(&objs[n_obj++], (Vec3){i-2-0.5, j-2-0.5, k-2-0.5}, 0.05, mat_light);
+            make_sphere(&objs[n_obj++], (Vec3){i-2-0.5, j-2-0.5, k-2-0.5}, 0.025, mat_light);
+            make_sphere(&objs[n_obj++], (Vec3){i-2-0.5, j-2-0.5, k-2-0.5}, -0.05, mat_glass);
+            make_sphere(&objs[n_obj++], (Vec3){i-2-0.5, j-2-0.5, k-2-0.5}, 0.1, mat_glass);
           }
         }
       }
@@ -643,7 +645,8 @@ void *render_task(void *arg) {
 
   for (int line = 0; line < rd->height; line++) {
     if (rd->show_progress) {
-      printf("line %d of %d\n", line+1, rd->height);
+      printf("\rline %d of %d", line+1, rd->height);
+      fflush(stdout);
     }
     int j = rd->height - line - 1;
     for (int i = 0; i < rd->width; i++) {
@@ -659,16 +662,19 @@ void *render_task(void *arg) {
       rd->pixels[line * rd->width + i] = pixel_color;
     }
   }
+  if (rd->show_progress) {
+    printf("\ndone\n");
+  }
 
   return arg;
 }
 
 void write_test_image(const char *filename) {
-  double aspect_ratio = 3.0 / 2.0;
-  int width = 500;
+  double aspect_ratio = 16.0 / 9.0;
+  int width = 1920;
   int height = (int)(width / aspect_ratio);
-  int samples_per_pixel = 160;
-  int max_depth = 100;
+  int samples_per_pixel = 320;
+  int max_depth = 150;
   int num_threads = 16;
 
   Rand rand;
@@ -683,8 +689,6 @@ void write_test_image(const char *filename) {
 
   pthread_t threads[num_threads];
 
-  int check_samples = 0;
-
   for (int i = 0; i < num_threads; i++) {
     struct RenderData *rd = malloc(sizeof(struct RenderData));
     rd->width = width;
@@ -693,7 +697,6 @@ void write_test_image(const char *filename) {
     if (i < samples_per_pixel % num_threads) {
       rd->samples_per_pixel++;
     }
-    check_samples += rd->samples_per_pixel;
     rd->max_depth = max_depth;
     rd->pixels = malloc(height * width * sizeof(Color));
     rd->cam = &cam;
@@ -703,7 +706,6 @@ void write_test_image(const char *filename) {
     rd->show_progress = (i == 0);
     pthread_create(&threads[i], NULL, &render_task, (void*)rd);
   }
-  printf("(with %d total samples per pixel between them)\n", check_samples);
 
   Color *pixels = malloc(height * width * sizeof(Color));
   for (int i = 0; i < height * width; i++) {
