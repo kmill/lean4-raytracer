@@ -609,7 +609,7 @@ void write_test_image(const char *filename) {
     pthread_create(&threads[i], NULL, &render_task, (void*)rd);
   }
 
-  Color pixels[height * width];
+  Color *pixels = malloc(height * width * sizeof(Color));
   for (int i = 0; i < height * width; i++) {
     pixels[i] = Color_black;
   }
@@ -632,6 +632,7 @@ void write_test_image(const char *filename) {
     write_color(f, Vec3_scale(1.0 / (samples_per_pixel * num_threads), pixels[i]));
   }
   fclose(f);
+  free(pixels);
 }
 
 int main(int argc, char **argv) {
