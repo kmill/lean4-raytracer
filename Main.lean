@@ -1,4 +1,4 @@
-import render.vec3
+import Render.Vec3
 
 @[inline] def Float.max (x y : Float) : Float := if x ≤ y then y else x
 @[inline] def Float.min (x y : Float) : Float := if x ≤ y then x else y
@@ -17,7 +17,7 @@ def IO.randFloat (lo := 0.0) (hi := 1.0) : IO Float := do
   let gen ← IO.stdGenRef.get
   let (r, gen) := randomFloat gen
   IO.stdGenRef.set gen
-  pure $ lo + (hi - lo) * r
+  return lo + (hi - lo) * r
 
 def IO.randVec3 (lo := 0.0) (hi := 1.0) : IO (Vec3 Float) :=
   return ⟨←IO.randFloat lo hi, ←IO.randFloat lo hi, ←IO.randFloat lo hi⟩
@@ -79,7 +79,7 @@ def Camera.default
 def Camera.getRay (c : Camera) (s t : Float) : IO (Ray Float) := do
   let rd := c.lensRadius * (← IO.randVec3InUnitDisk)
   let offset := rd.x * c.u + rd.y * c.v
-  Ray.mk (c.origin + offset) (c.lowerLeftCorner + s*c.horizontal + t*c.vertical - c.origin - offset)
+  return Ray.mk (c.origin + offset) (c.lowerLeftCorner + s*c.horizontal + t*c.vertical - c.origin - offset)
 
 structure HitRecord where
   p : Vec3 Float
@@ -91,12 +91,10 @@ structure HitRecord where
 def HitRecord.withNormal (p : Vec3 Float) (t : Float) (r : Ray Float) (outwardNormal : Vec3 Float) : HitRecord :=
   let frontFace : Bool := r.dir.dot outwardNormal < 0.0
   let normal : Vec3 Float := if frontFace then outwardNormal else -outwardNormal
-  return {
-    p := p
+  { p := p
     t := t
     normal := normal
-    frontFace := frontFace
-  }
+    frontFace := frontFace }
 
 inductive MaterialResponse
 | absorb

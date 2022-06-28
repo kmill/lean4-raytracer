@@ -22,16 +22,14 @@ the entire image is rendered multiple times, and the results are averaged togeth
 
 Assuming you already have Lean 4 setup, this builds an executable and runs it:
 ```
-$ leanpkg build build/bin/render && time ./build/bin/render test.ppm
+$ lake build && time ./build/bin/render test.ppm
 ```
 The rendering settings are hard-coded in `writeTestImage` in `render.lean`.
-
-(Note: I was told that you might need to `leanmake bin PKG=render` before building.)
 
 ## C benchmark
 
 The `c` folder contains an implementation of the raytracer in C, hand translated from Lean using C idioms.
-This is not a fair comparison because I spent almost no time thinking about optimizing the Lean version, and the only purpose here is to get some idea of the relative speed of my Lean code to see if I made any horrible mistakes.
+This is not a fair comparison because I spent almost no time thinking about optimizing the Lean version, and the only purpose here is to get some idea of the relative speed of my Lean code.
 
 The first test image in C took 20 seconds with the same configuration, and the second test image took 3 minutes 30 seconds with the same configuration.  This means my Lean program takes about 32x as long to run as the C version.
 
