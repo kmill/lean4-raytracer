@@ -5,8 +5,6 @@ structure Vec3 (α : Type _) :=
 
 namespace Vec3
 
-@[inline] def zero : Vec3 Float := ⟨0, 0, 0⟩
-
 @[inline] def map (f : α → β) (v : Vec3 α) : Vec3 β := ⟨f v.x, f v.y, f v.z⟩
 @[inline] def map₂ (f : α → β → γ) (v : Vec3 α) (w : Vec3 β) : Vec3 γ :=
     ⟨f v.x w.x, f v.y w.y, f v.z w.z⟩

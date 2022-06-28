@@ -5,7 +5,7 @@ import Render.Vec3
 @[inline] def Float.abs (x : Float) : Float := if x ≤ 0 then -x else x
 
 def Float.pi : Float := 3.1415926535897932385
-def Float.infinity : Float := 1e100 -- fix this
+@[inline] def Float.infinity : Float := 1e100 -- fix this
 
 /-- Uniform at random in [0, 1)-/
 def randomFloat {gen} [RandomGen gen] (g : gen) : Float × gen :=
@@ -23,14 +23,14 @@ def IO.randVec3 (lo := 0.0) (hi := 1.0) : IO (Vec3 Float) :=
   return ⟨←IO.randFloat lo hi, ←IO.randFloat lo hi, ←IO.randFloat lo hi⟩
 
 def IO.randVec3InUnitSphere : IO (Vec3 Float) := do
-  for i in [0:100] do -- 7e-33 probability of failure
+  for _ in [0:100] do -- 7e-33 probability of failure
     let p ← IO.randVec3 (-1.0) (1.0)
     if p.lengthSquared < 1.0 then
       return p
   return ⟨1, 0, 0⟩
 
 def IO.randVec3InUnitDisk : IO (Vec3 Float) := do
-  for i in [0:100] do -- 2e-67 probability of failure
+  for _ in [0:100] do -- 2e-67 probability of failure
     let p := Vec3.mk (← IO.randFloat (-1.0) (1.0)) (← IO.randFloat (-1.0) (1.0)) 0.0
     if p.lengthSquared < 1.0 then
       return p
@@ -47,7 +47,7 @@ structure Camera where
   lowerLeftCorner : Vec3 Float
   horizontal : Vec3 Float
   vertical : Vec3 Float
-  (u v w : Vec3 Float) /- right up back -/
+  (u v w : Vec3 Float) /- right, up, back -/
   lensRadius : Float
 
 /--
@@ -79,121 +79,128 @@ def Camera.default
 def Camera.getRay (c : Camera) (s t : Float) : IO (Ray Float) := do
   let rd := c.lensRadius * (← IO.randVec3InUnitDisk)
   let offset := rd.x * c.u + rd.y * c.v
-  return Ray.mk (c.origin + offset) (c.lowerLeftCorner + s*c.horizontal + t*c.vertical - c.origin - offset)
+  return { origin := c.origin + offset
+           dir := c.lowerLeftCorner + s*c.horizontal + t*c.vertical - c.origin - offset }
+
+inductive MaterialResponse
+| emit (c : Color Float)
+| scatter (albedo : Color Float) (scattered : Ray Float)
+
+def MaterialResponse.absorb : MaterialResponse := MaterialResponse.emit Color.black
+
+inductive Material
+| lambertian (albedo : Color Float)
+| metal (albedo : Color Float) (fuzz : Float := 0.0)
+| dielectric (indexOfRefraction : Float)
+| sky
 
 structure HitRecord where
   p : Vec3 Float
   t : Float
+  material : Material
   normal : Vec3 Float
   frontFace : Bool
 
 @[inline]
-def HitRecord.withNormal (p : Vec3 Float) (t : Float) (r : Ray Float) (outwardNormal : Vec3 Float) : HitRecord :=
-  let frontFace : Bool := r.dir.dot outwardNormal < 0.0
-  let normal : Vec3 Float := if frontFace then outwardNormal else -outwardNormal
+def HitRecord.withNormal
+      (p : Vec3 Float) (t : Float) (m : Material)
+      (dir : Vec3 Float) (outwardNormal : Vec3 Float) : HitRecord :=
+  let frontFace : Bool := dir.dot outwardNormal < 0.0
   { p := p
     t := t
-    normal := normal
+    material := m
+    normal := if frontFace then outwardNormal else -outwardNormal
     frontFace := frontFace }
 
-inductive MaterialResponse
-| absorb
-| scatter (albedo : Color Float) (scattered : Ray Float)
-
-structure Material where
-  scatter : Ray Float → HitRecord → IO MaterialResponse
-
-def lambertian (albedo : Color Float) : Material where
-  scatter (r : Ray Float) (hitrec : HitRecord) := do
-    let mut scatterDir := hitrec.normal + (←IO.randVec3InUnitSphere).normalized
-    if scatterDir.nearZero then
-      scatterDir := hitrec.normal
-    let scattered := Ray.mk hitrec.p scatterDir
-    return MaterialResponse.scatter albedo scattered
-
-def metal (albedo : Color Float) (fuzz : Float := 0.0) : Material where
-  scatter (r : Ray Float) (hitrec : HitRecord) := do
-    let reflected := r.dir.normalized.reflect hitrec.normal
-    let scattered := Ray.mk hitrec.p (reflected + fuzz * (← IO.randVec3InUnitSphere))
-    if scattered.dir.dot hitrec.normal > 0.0 then
-      return MaterialResponse.scatter albedo scattered
-    else
-      return MaterialResponse.absorb
-
-def refract (uv : Vec3 Float) (n : Vec3 Float) (etai_over_etat : Float) : Vec3 Float :=
+@[inline]
+def Vec3.refract (uv : Vec3 Float) (n : Vec3 Float) (etai_over_etat : Float) : Vec3 Float :=
   let cosTheta := Float.min (- uv.dot n) 1.0
   let rOutPerp := etai_over_etat * (uv + cosTheta * n)
-  let rOutParallel := (-Float.sqrt (Float.abs (1.0 - rOutPerp.lengthSquared))) * n
+  let rOutParallel := (-Float.sqrt (1.0 - rOutPerp.lengthSquared).abs) * n
   rOutPerp + rOutParallel
 
-def dielectric (indexOfRefraction : Float) : Material where
-  scatter (r : Ray Float) (hitrec : HitRecord) := do
-    let refractionRatio := if hitrec.frontFace then 1.0/indexOfRefraction else indexOfRefraction
-    let unitDirection := r.dir.normalized
-    let cosTheta := Float.min (-unitDirection.dot hitrec.normal) 1.0
-    let sinTheta := Float.sqrt (1.0 - cosTheta * cosTheta)
-    let cannotRefract : Bool := refractionRatio * sinTheta > 1.0
-
-    -- Schlick's approximation
-    let reflectance (cosine : Float) (refIdx : Float) : Float :=
-      let r0' := (1 - refIdx) / (1 + refIdx)
-      let r0 := r0' * r0'
-      r0 + (1 - r0) * Float.pow (1 - cosine) 5
-
-    let direction : Vec3 Float :=
-      if cannotRefract || reflectance cosTheta refractionRatio > (← IO.randFloat) then
-        Vec3.reflect unitDirection hitrec.normal
+def HitRecord.scatter (hitrec : HitRecord) (r : Ray Float) : IO MaterialResponse :=
+  match hitrec.material with
+  | .lambertian albedo => do
+      let mut scatterDir := hitrec.normal + (←IO.randVec3InUnitSphere).normalized
+      if scatterDir.nearZero then
+        scatterDir := hitrec.normal
+      return .scatter albedo { origin := hitrec.p, dir := scatterDir }
+  | .metal albedo fuzz => do
+      let reflected := r.dir.normalized.reflect hitrec.normal
+      let scattered := { origin := hitrec.p, dir := reflected + fuzz * (← IO.randVec3InUnitSphere) }
+      if scattered.dir.dot hitrec.normal > 0.0 then
+        return .scatter albedo scattered
       else
-        refract unitDirection hitrec.normal refractionRatio
+        return .absorb
+  | .dielectric indexOfRefraction => do
+      let refractionRatio := if hitrec.frontFace then 1.0/indexOfRefraction else indexOfRefraction
+      let unitDirection := r.dir.normalized
+      let cosTheta := Float.min (-unitDirection.dot hitrec.normal) 1.0
+      let sinTheta := Float.sqrt (1.0 - cosTheta * cosTheta)
+      let cannotRefract : Bool := refractionRatio * sinTheta > 1.0
 
-    let scattered := Ray.mk hitrec.p direction
-    return MaterialResponse.scatter Color.white scattered
+      -- Schlick's approximation
+      let reflectance :=
+        let r0' := (1 - refractionRatio) / (1 + refractionRatio)
+        let r0 := r0' * r0'
+        r0 + (1 - r0) * Float.pow (1 - cosTheta) 5
 
-structure Hittable where
-  hit : Ray Float → Float -> Float -> Option (HitRecord × Material)
+      let direction : Vec3 Float :=
+        if cannotRefract || reflectance > (← IO.randFloat) then
+          Vec3.reflect unitDirection hitrec.normal
+        else
+          Vec3.refract unitDirection hitrec.normal refractionRatio
 
-def mkSphere (center : Vec3 Float) (radius : Float) (mat : Material) : Hittable where
-  hit (r : Ray Float) (tmin tmax : Float) := Id.run <| do
-    let oc := r.origin - center
-    let a := r.dir.lengthSquared
-    let halfb := Vec3.dot oc r.dir
-    let c := oc.lengthSquared - radius * radius
-    let discr := halfb*halfb - a*c
-    if discr < 0.0 then
-      return none
-    let sqrtd := discr.sqrt
-    -- Find the nearest root that lies in the acceptable range
-    let mut root := (-halfb - sqrtd) / a
-    if root < tmin || tmax < root then
-      root := (-halfb + sqrtd) / a
-      if root < tmin || tmax < root then
-        return none
-    let t := root
-    let p := r.at t
-    let outwardNormal := (p - center) / radius
-    return some (HitRecord.withNormal p t r outwardNormal, mat)
-
-def hitList (hs : Array Hittable) (r : Ray Float) (tmin tmax : Float) : Option (HitRecord × Material) := Id.run <| do
-  let mut hitrec : Option (HitRecord × Material) := none
-  for obj in hs do
-    let closest := (hitrec.map (HitRecord.t ∘ Prod.fst)).getD tmax
-    hitrec := obj.hit r tmin closest <|> hitrec
-  return hitrec
-
-def rayColor (hs : Array Hittable) (r : Ray Float) : (depth : Nat) → IO (Color Float)
-| 0 => return ⟨0, 0, 0⟩ -- exceeded ray bounce limit, no more light gathered
-| (depth+1) => do
-  match hitList hs r 0.001 Float.infinity with
-  | some (hitrec, mat) => do
-    match ← mat.scatter r hitrec with
-    | MaterialResponse.absorb =>
-        return Color.black
-    | MaterialResponse.scatter albedo scattered =>
-        return albedo * (← rayColor hs scattered depth)
-  | none => do
+      let scattered := { origin := hitrec.p, dir := direction }
+      return .scatter Color.white scattered
+  | .sky => do
     let unit : Vec3 Float := r.dir.normalized
     let t := 0.5 * (unit.y + 1.0)
-    return (1.0 - t) * Color.white + t * (Color.mk 0.5 0.7 1.0)
+    return .emit <| (1.0 - t) * Color.white + t * (Color.mk 0.5 0.7 1.0)
+
+inductive Hittable
+| sphere (center : Vec3 Float) (radius : Float) (mat : Material)
+
+def Hittable.hit (r : Ray Float) (tmin : Float) (hitrec : HitRecord) : (obj : Hittable) → HitRecord
+| sphere center radius mat => Id.run do
+  let oc := r.origin - center
+  let a := r.dir.lengthSquared
+  let halfb := Vec3.dot oc r.dir
+  let c := oc.lengthSquared - radius * radius
+  let discr := halfb*halfb - a*c
+  if discr < 0.0 then
+    return hitrec
+  let sqrtd := discr.sqrt
+  -- Find the nearest root that lies in the acceptable range
+  let mut root := (-halfb - sqrtd) / a
+  if root < tmin || hitrec.t < root then
+    root := (-halfb + sqrtd) / a
+    if root < tmin || hitrec.t < root then
+      return hitrec
+  let t := root
+  let p := r.at t
+  let outwardNormal := (p - center) / radius
+  return HitRecord.withNormal p t mat r.dir outwardNormal
+
+def hitList (hs : Array Hittable) (r : Ray Float) (tmin tmax : Float) : HitRecord := Id.run do
+  let mut hitrec : HitRecord :=
+    { p := ⟨0, 0, 0⟩
+      t := tmax
+      material := Material.sky
+      normal := ⟨0, 0, 0⟩
+      frontFace := true }
+  for obj in hs do
+    hitrec := obj.hit r tmin hitrec
+  return hitrec
+
+def rayColor (hs : Array Hittable) (r : Ray Float) :
+  (depth : Nat) → (acc : Color Float) → IO (Color Float)
+| 0, _ => return Color.black -- exceeded ray bounce limit, no more light gathered
+| depth + 1, acc => do
+  match ← (hitList hs r 0.001 Float.infinity).scatter r with
+  | .emit c => return acc * c
+  | .scatter albedo scattered => rayColor hs scattered depth (albedo * acc)
 
 def Float.clampToUInt8 (x : Float) : UInt8 :=
   Float.toUInt8 <| Float.min 255 <| Float.max 0 x
@@ -208,7 +215,7 @@ def randomScene : IO (Array Hittable) := do
   let mut world : Array Hittable := #[]
 
   -- Ground
-  world := world.push <| mkSphere ⟨0, -1000, 0⟩ 1000 (lambertian ⟨0.5, 0.5, 0.5⟩)
+  world := world.push <| .sphere ⟨0, -1000, 0⟩ 1000 (.lambertian ⟨0.5, 0.5, 0.5⟩)
 
   for a' in [0:22] do
     let a := Float.ofNat a' - 11
@@ -219,17 +226,17 @@ def randomScene : IO (Array Hittable) := do
         let chooseMat ← IO.randFloat
         if chooseMat < 0.9 then
           let albedo : Color Float := (← IO.randVec3) * (← IO.randVec3)
-          world := world.push <| mkSphere center 0.2 (lambertian albedo)
+          world := world.push <| .sphere center 0.2 (.lambertian albedo)
         else if chooseMat < 0.95 then
           let albedo : Color Float ← IO.randVec3 0.5 1
           let fuzz ← IO.randFloat 0 0.5
-          world := world.push <| mkSphere center 0.2 (metal albedo fuzz)
+          world := world.push <| .sphere center 0.2 (.metal albedo fuzz)
         else
-          world := world.push <| mkSphere center 0.2 (dielectric 1.5)
+          world := world.push <| .sphere center 0.2 (.dielectric 1.5)
 
-  world := world.push <| mkSphere ⟨0, 1, 0⟩ 1 (dielectric 1.5)
-  world := world.push <| mkSphere ⟨-4, 1, 0⟩ 1 (lambertian ⟨0.4, 0.2, 0.1⟩)
-  world := world.push <| mkSphere ⟨4, 1, 0⟩ 1 (metal ⟨0.7, 0.6, 0.5⟩)
+  world := world.push <| .sphere ⟨0, 1, 0⟩ 1 (.dielectric 1.5)
+  world := world.push <| .sphere ⟨-4, 1, 0⟩ 1 (.lambertian ⟨0.4, 0.2, 0.1⟩)
+  world := world.push <| .sphere ⟨4, 1, 0⟩ 1 (.metal ⟨0.7, 0.6, 0.5⟩)
 
   return world
 
@@ -241,6 +248,9 @@ def writeTestImage (filename : String) : IO Unit := do
   let samplesPerPixel := 10
   let maxDepth := 30
 
+  -- Set the seed to something specific for determinism
+  IO.stdGenRef.set mkStdGen
+
   let world ← randomScene
 
   let lookFrom : Vec3 Float := ⟨13, 2, 3⟩
@@ -251,18 +261,22 @@ def writeTestImage (filename : String) : IO Unit := do
   let cam := Camera.default lookFrom lookAt vup 20.0 aspectRatio aperture distToFocus
 
   let renderTask (showProgress := false) : IO (Array (Color Float)) := do
+    let width' := Float.ofNat width
+    let height' := Float.ofNat height
     let mut pixels : Array (Color Float) := Array.empty
-    for j' in [0:height] do
+    for line in [0:height] do
       if showProgress then
-        IO.println s!"line {j'+1} of {height}"
-      let j := height - j' - 1
+        IO.println s!"line {line+1} of {height}"
+      let j := height - line - 1
+      let j' := Float.ofNat j
       for i in [0:width] do
+        let i' := Float.ofNat i
         let mut pixelColor := Color.black
-        for s in [0:samplesPerPixel] do
-          let u := (Float.ofNat i + (← IO.randFloat))/ Float.ofNat width
-          let v := (Float.ofNat j + (← IO.randFloat))/ Float.ofNat height
+        for _ in [0:samplesPerPixel] do
+          let u := (i' + (← IO.randFloat)) / width'
+          let v := (j' + (← IO.randFloat)) / height'
           let ray ← cam.getRay u v
-          pixelColor := pixelColor + (← rayColor world ray maxDepth)
+          pixelColor := pixelColor + (← rayColor world ray maxDepth Color.white)
         pixels := pixels.push pixelColor
     return pixels
 
@@ -273,7 +287,7 @@ def writeTestImage (filename : String) : IO Unit := do
   let mut pixels : Array (Color Float) := Array.mkArray (height * width) Color.black
 
   for t in tasks do
-    let pixels' ← (IO.ofExcept (← IO.wait t))
+    let pixels' ← IO.ofExcept (← IO.wait t)
     let pixels'' := pixels
     for i in [0:height*width] do
       pixels := pixels.set! i (pixels'[i] + pixels''[i])
@@ -285,8 +299,8 @@ def writeTestImage (filename : String) : IO Unit := do
     handle.putStrLn s!"{width} {height} 255"
     for i in [0:height*width] do
       let pixel := pixels[i]
-      handle.writeColor (pixel / Float.ofNat (samplesPerPixel * numThreads))
+      handle.writeColor <| pixel / Float.ofNat (samplesPerPixel * numThreads)
 
 def main : List String → IO Unit
 | [] => writeTestImage "out.ppm"
-| (x::xs) => writeTestImage x
+| (x::_) => writeTestImage x

@@ -5,10 +5,14 @@ it can be used both as a proof assistant and for practical programs.
 
 This repository implements the ray tracer described in 
 [_Ray Tracing in One Weekend_](https://raytracing.github.io/books/RayTracingInOneWeekend.html).
+Code for writing PPM files originally came from
+[https://github.com/TOTBWF/lean4-raytrace](TOTBWF/lean4-raytrace).
 
 The raytracer uses `Task`s to render in parallel.  Part of a raytracer is using supersampling
 to better estimate the amount of light entering each pixel, so it is trivial to parallelize:
 the entire image is rendered multiple times, and the results are averaged together.
+The following execution times are with respect to an older version of the code, and the new one is
+somewhat faster, for example the first test image now takes about 8.5 minutes with the same setup.
 
 ![final test image](https://github.com/kmill/lean4-raytracer/blob/master/test13.png?raw=true)
 
@@ -29,8 +33,9 @@ The rendering settings are hard-coded in `writeTestImage` in `render.lean`.
 ## C benchmark
 
 The `c` folder contains an implementation of the raytracer in C, hand translated from Lean using C idioms.
-This is not a fair comparison because I spent almost no time thinking about optimizing the Lean version, and the only purpose here is to get some idea of the relative speed of my Lean code.
+This is not meant to be a fair comparison, and I spent more time thinking about optimizing the C version.
+The only purpose here is to get some idea of the relative speed of my Lean code.
 
-The first test image in C took 20 seconds with the same configuration, and the second test image took 3 minutes 30 seconds with the same configuration.  This means my Lean program takes about 32x as long to run as the C version.
+The first test image in C took 20 seconds with the same configuration, and the second test image took 3 minutes 30 seconds with the same configuration.  This means my Lean program takes about 32x as long to run as the C version. (This was using the earlier version of the Lean program. The new one is about 25x.)
 
-The [optimize-lean](https://github.com/kmill/lean4-raytracer/tree/optimize-lean) branch has a more optimized version of the Lean code, and it runs in about 25% less time (so 7.5 minutes for the first test configuration).
+The current version incorporates optimizations from the [optimize-lean](https://github.com/kmill/lean4-raytracer/tree/optimize-lean) branch.
