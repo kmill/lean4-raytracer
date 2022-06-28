@@ -6,7 +6,7 @@ it can be used both as a proof assistant and for practical programs.
 This repository implements the ray tracer described in 
 [_Ray Tracing in One Weekend_](https://raytracing.github.io/books/RayTracingInOneWeekend.html).
 Code for writing PPM files originally came from
-[https://github.com/TOTBWF/lean4-raytrace](TOTBWF/lean4-raytrace).
+[TOTBWF/lean4-raytrace](https://github.com/TOTBWF/lean4-raytrace).
 
 The raytracer uses `Task`s to render in parallel.  Part of a raytracer is using supersampling
 to better estimate the amount of light entering each pixel, so it is trivial to parallelize:
