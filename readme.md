@@ -26,7 +26,7 @@ somewhat faster, for example the first test image now takes about 8.5 minutes wi
 
 Assuming you already have Lean 4 setup, this builds an executable and runs it:
 ```
-$ lake build && time ./build/bin/render test.ppm
+$ lake build && time lake exe render test.ppm
 ```
 The rendering settings are hard-coded in `writeTestImage` in `render.lean`.
 

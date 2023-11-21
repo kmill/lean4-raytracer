@@ -1,9 +1,5 @@
 import Render.Vec3
 
-@[inline] def Float.max (x y : Float) : Float := if x ≤ y then y else x
-@[inline] def Float.min (x y : Float) : Float := if x ≤ y then x else y
-@[inline] def Float.abs (x : Float) : Float := if x ≤ 0 then -x else x
-
 def Float.pi : Float := 3.1415926535897932385
 @[inline] def Float.infinity : Float := 1e100 -- fix this
 
@@ -114,7 +110,7 @@ def HitRecord.withNormal
 
 @[inline]
 def Vec3.refract (uv : Vec3 Float) (n : Vec3 Float) (etai_over_etat : Float) : Vec3 Float :=
-  let cosTheta := Float.min (- uv.dot n) 1.0
+  let cosTheta := min (- uv.dot n) 1.0
   let rOutPerp := etai_over_etat * (uv + cosTheta * n)
   let rOutParallel := (-Float.sqrt (1.0 - rOutPerp.lengthSquared).abs) * n
   rOutPerp + rOutParallel
@@ -136,7 +132,7 @@ def HitRecord.scatter (hitrec : HitRecord) (r : Ray Float) : IO MaterialResponse
   | .dielectric indexOfRefraction => do
       let refractionRatio := if hitrec.frontFace then 1.0/indexOfRefraction else indexOfRefraction
       let unitDirection := r.dir.normalized
-      let cosTheta := Float.min (-unitDirection.dot hitrec.normal) 1.0
+      let cosTheta := min (-unitDirection.dot hitrec.normal) 1.0
       let sinTheta := Float.sqrt (1.0 - cosTheta * cosTheta)
       let cannotRefract : Bool := refractionRatio * sinTheta > 1.0
 
@@ -203,7 +199,7 @@ def rayColor (hs : Array Hittable) (r : Ray Float) :
   | .scatter albedo scattered => rayColor hs scattered depth (albedo * acc)
 
 def Float.clampToUInt8 (x : Float) : UInt8 :=
-  Float.toUInt8 <| Float.min 255 <| Float.max 0 x
+  Float.toUInt8 <| min 255 <| max 0 x
 
 def IO.FS.Handle.writeColor (handle : IO.FS.Handle) (c : Color Float) : IO Unit := do
   let r := Float.clampToUInt8 (256 * c.r.sqrt)
@@ -290,15 +286,15 @@ def writeTestImage (filename : String) : IO Unit := do
     let pixels' ← IO.ofExcept (← IO.wait t)
     let pixels'' := pixels
     for i in [0:height*width] do
-      pixels := pixels.set! i (pixels'[i] + pixels''[i])
+      pixels := pixels.set! i (pixels'[i]! + pixels''[i]!)
 
   IO.println s!"Writing to {filename}"
- 
+
   IO.FS.withFile filename IO.FS.Mode.write λ handle => do
     handle.putStrLn "P3"
     handle.putStrLn s!"{width} {height} 255"
     for i in [0:height*width] do
-      let pixel := pixels[i]
+      let pixel := pixels[i]!
       handle.writeColor <| pixel / Float.ofNat (samplesPerPixel * numThreads)
 
 def main : List String → IO Unit

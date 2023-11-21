@@ -1,4 +1,5 @@
 import Lake
+
 open Lake DSL
 
 package render {
@@ -9,7 +10,7 @@ lean_lib Render {
   -- add library configuration options here
 }
 
-@[defaultTarget]
+@[default_target]
 lean_exe render {
   root := `Main
 }
