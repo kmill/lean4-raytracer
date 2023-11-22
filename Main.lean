@@ -1,3 +1,8 @@
+/-
+Copyright (c) 2021 Kyle Miller. All rights reserved.
+Released under Apache 2.0 license as described in the file LICENSE.
+Authors: Kyle Miller
+-/
 import Render.Vec3
 
 def Float.pi : Float := 3.1415926535897932385
@@ -16,7 +21,7 @@ def IO.randFloat (lo := 0.0) (hi := 1.0) : IO Float := do
   return lo + (hi - lo) * r
 
 def IO.randVec3 (lo := 0.0) (hi := 1.0) : IO (Vec3 Float) :=
-  return ⟨←IO.randFloat lo hi, ←IO.randFloat lo hi, ←IO.randFloat lo hi⟩
+  return ⟨← IO.randFloat lo hi, ← IO.randFloat lo hi, ← IO.randFloat lo hi⟩
 
 def IO.randVec3InUnitSphere : IO (Vec3 Float) := do
   for _ in [0:100] do -- 7e-33 probability of failure
@@ -50,12 +55,12 @@ structure Camera where
 vfov is the vertical field of view (in degrees)
 -/
 def Camera.default
-      (lookFrom lookAt vup : Vec3 Float)
-      (vfov : Float)
-      (aspectRatio : Float)
-      (aperture : Float)
-      (focusDist : Float) :
-      Camera :=
+    (lookFrom lookAt vup : Vec3 Float)
+    (vfov : Float)
+    (aspectRatio : Float)
+    (aperture : Float)
+    (focusDist : Float) :
+    Camera :=
   let theta := vfov / 180. * Float.pi
   let h := Float.tan (theta / 2)
   let viewportHeight := 2.0 * h
@@ -79,16 +84,16 @@ def Camera.getRay (c : Camera) (s t : Float) : IO (Ray Float) := do
            dir := c.lowerLeftCorner + s*c.horizontal + t*c.vertical - c.origin - offset }
 
 inductive MaterialResponse
-| emit (c : Color Float)
-| scatter (albedo : Color Float) (scattered : Ray Float)
+  | emit (c : Color Float)
+  | scatter (albedo : Color Float) (scattered : Ray Float)
 
 def MaterialResponse.absorb : MaterialResponse := MaterialResponse.emit Color.black
 
 inductive Material
-| lambertian (albedo : Color Float)
-| metal (albedo : Color Float) (fuzz : Float := 0.0)
-| dielectric (indexOfRefraction : Float)
-| sky
+  | lambertian (albedo : Color Float)
+  | metal (albedo : Color Float) (fuzz : Float := 0.0)
+  | dielectric (indexOfRefraction : Float)
+  | sky
 
 structure HitRecord where
   p : Vec3 Float
@@ -99,8 +104,8 @@ structure HitRecord where
 
 @[inline]
 def HitRecord.withNormal
-      (p : Vec3 Float) (t : Float) (m : Material)
-      (dir : Vec3 Float) (outwardNormal : Vec3 Float) : HitRecord :=
+    (p : Vec3 Float) (t : Float) (m : Material)
+    (dir : Vec3 Float) (outwardNormal : Vec3 Float) : HitRecord :=
   let frontFace : Bool := dir.dot outwardNormal < 0.0
   { p := p
     t := t
@@ -118,7 +123,7 @@ def Vec3.refract (uv : Vec3 Float) (n : Vec3 Float) (etai_over_etat : Float) : V
 def HitRecord.scatter (hitrec : HitRecord) (r : Ray Float) : IO MaterialResponse :=
   match hitrec.material with
   | .lambertian albedo => do
-      let mut scatterDir := hitrec.normal + (←IO.randVec3InUnitSphere).normalized
+      let mut scatterDir := hitrec.normal + (← IO.randVec3InUnitSphere).normalized
       if scatterDir.nearZero then
         scatterDir := hitrec.normal
       return .scatter albedo { origin := hitrec.p, dir := scatterDir }
@@ -156,28 +161,28 @@ def HitRecord.scatter (hitrec : HitRecord) (r : Ray Float) : IO MaterialResponse
     return .emit <| (1.0 - t) * Color.white + t * (Color.mk 0.5 0.7 1.0)
 
 inductive Hittable
-| sphere (center : Vec3 Float) (radius : Float) (mat : Material)
+  | sphere (center : Vec3 Float) (radius : Float) (mat : Material)
 
 def Hittable.hit (r : Ray Float) (tmin : Float) (hitrec : HitRecord) : (obj : Hittable) → HitRecord
-| sphere center radius mat => Id.run do
-  let oc := r.origin - center
-  let a := r.dir.lengthSquared
-  let halfb := Vec3.dot oc r.dir
-  let c := oc.lengthSquared - radius * radius
-  let discr := halfb*halfb - a*c
-  if discr < 0.0 then
-    return hitrec
-  let sqrtd := discr.sqrt
-  -- Find the nearest root that lies in the acceptable range
-  let mut root := (-halfb - sqrtd) / a
-  if root < tmin || hitrec.t < root then
-    root := (-halfb + sqrtd) / a
-    if root < tmin || hitrec.t < root then
+  | sphere center radius mat => Id.run do
+    let oc := r.origin - center
+    let a := r.dir.lengthSquared
+    let halfb := Vec3.dot oc r.dir
+    let c := oc.lengthSquared - radius * radius
+    let discr := halfb*halfb - a*c
+    if discr < 0.0 then
       return hitrec
-  let t := root
-  let p := r.at t
-  let outwardNormal := (p - center) / radius
-  return HitRecord.withNormal p t mat r.dir outwardNormal
+    let sqrtd := discr.sqrt
+    -- Find the nearest root that lies in the acceptable range
+    let mut root := (-halfb - sqrtd) / a
+    if root < tmin || hitrec.t < root then
+      root := (-halfb + sqrtd) / a
+      if root < tmin || hitrec.t < root then
+        return hitrec
+    let t := root
+    let p := r.at t
+    let outwardNormal := (p - center) / radius
+    return HitRecord.withNormal p t mat r.dir outwardNormal
 
 def hitList (hs : Array Hittable) (r : Ray Float) (tmin tmax : Float) : HitRecord := Id.run do
   let mut hitrec : HitRecord :=
@@ -191,12 +196,12 @@ def hitList (hs : Array Hittable) (r : Ray Float) (tmin tmax : Float) : HitRecor
   return hitrec
 
 def rayColor (hs : Array Hittable) (r : Ray Float) :
-  (depth : Nat) → (acc : Color Float) → IO (Color Float)
-| 0, _ => return Color.black -- exceeded ray bounce limit, no more light gathered
-| depth + 1, acc => do
-  match ← (hitList hs r 0.001 Float.infinity).scatter r with
-  | .emit c => return acc * c
-  | .scatter albedo scattered => rayColor hs scattered depth (albedo * acc)
+    (depth : Nat) → (acc : Color Float) → IO (Color Float)
+  | 0, _ => return Color.black -- exceeded ray bounce limit, no more light gathered
+  | depth + 1, acc => do
+    match ← (hitList hs r 0.001 Float.infinity).scatter r with
+    | .emit c => return acc * c
+    | .scatter albedo scattered => rayColor hs scattered depth (albedo * acc)
 
 def Float.clampToUInt8 (x : Float) : UInt8 :=
   Float.toUInt8 <| min 255 <| max 0 x
@@ -280,6 +285,7 @@ def writeTestImage (filename : String) : IO Unit := do
   let mut tasks := Array.empty
   for i in [0:numThreads] do
     tasks := tasks.push (← IO.asTask (renderTask (i = 0)))
+
   let mut pixels : Array (Color Float) := Array.mkArray (height * width) Color.black
 
   for t in tasks do
@@ -290,12 +296,12 @@ def writeTestImage (filename : String) : IO Unit := do
 
   IO.println s!"Writing to {filename}"
 
-  IO.FS.withFile filename IO.FS.Mode.write λ handle => do
+  IO.FS.withFile filename IO.FS.Mode.write fun handle => do
     handle.putStrLn "P3"
     handle.putStrLn s!"{width} {height} 255"
+    let divisor := Float.ofNat (samplesPerPixel * numThreads)
     for i in [0:height*width] do
-      let pixel := pixels[i]!
-      handle.writeColor <| pixel / Float.ofNat (samplesPerPixel * numThreads)
+      handle.writeColor <| pixels[i]! / divisor
 
 def main : List String → IO Unit
 | [] => writeTestImage "out.ppm"

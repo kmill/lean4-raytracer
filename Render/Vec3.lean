@@ -1,4 +1,8 @@
---import render.Algebra
+/-
+Copyright (c) 2021 Kyle Miller. All rights reserved.
+Released under Apache 2.0 license as described in the file LICENSE.
+Authors: Kyle Miller
+-/
 
 structure Vec3 (α : Type _) :=
   (x y z : α)
@@ -51,8 +55,8 @@ instance [Div α] : HDiv (Vec3 α) α (Vec3 α) where
 /-- Reflect v over plane with normal vector n. -/
 @[inline] def reflect (v n : Vec3 Float) : Vec3 Float := v - 2 * v.dot n * n
 
-@[inline] def nearZero (v : Vec3 Float) (ε : Float := 1e-8) : Bool :=
-  v.length < ε
+@[inline] def nearZero (v : Vec3 Float) (ε2 : Float := 1e-16) : Bool :=
+  v.lengthSquared < ε2
 
 end Vec3
 
