@@ -14,11 +14,11 @@ the entire image is rendered multiple times, and the results are averaged togeth
 The following execution times are with respect to an older version of the code, and the new one is
 somewhat faster, for example the first test image now takes about 8.5 minutes with the same setup.
 
-![final test image](https://github.com/kmill/lean4-raytracer/blob/master/test13.png?raw=true)
+![final test image](https://github.com/kmill/lean4-raytracer/blob/master/output/test13.png?raw=true)
 
 (10 minutes with 8 threads on an Intel Xeon E5-2665. 500x333 pixels, 80 total samples per pixel, max depth 30.)
 
-![final test image, higher resolution](https://github.com/kmill/lean4-raytracer/blob/master/test13.bigger.png?raw=true)
+![final test image, higher resolution](https://github.com/kmill/lean4-raytracer/blob/master/output/test13.bigger.png?raw=true)
 
 (2 hours with 16 threads on an Intel Xeon E5-2665. 800x533 pixels, 480 total samples per pixel, max depth 50.)
 
