@@ -249,6 +249,8 @@ def writeTestImage (filename : String) : IO Unit := do
   let samplesPerPixel := 10
   let maxDepth := 30
 
+  IO.println s!"{numThreads} threads, {width}x{height} pixels, {numThreads*samplesPerPixel} total samples per pixel, max depth {maxDepth}."
+
   -- Set the seed to something specific for determinism
   IO.stdGenRef.set mkStdGen
 
