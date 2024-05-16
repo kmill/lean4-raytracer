@@ -569,9 +569,12 @@ void write_test_image(const char *filename) {
   double aspect_ratio = 3.0 / 2.0;
   int width = 500;
   int height = (int)(width / aspect_ratio);
-  int samples_per_pixel = 80;
+  int samples_per_pixel = 10;
   int max_depth = 30;
   int num_threads = 8;
+
+  printf("%d threads, %dx%d pixels, %d total samples per pixel, max depth %d.\n",
+    num_threads, width, height, samples_per_pixel*num_threads, max_depth);
 
   Rand rand;
   Rand_init(&rand, 0, 0);
