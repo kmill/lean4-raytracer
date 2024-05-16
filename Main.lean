@@ -245,8 +245,8 @@ def writeTestImage (filename : String) : IO Unit := do
   let width : Nat := 500
   let height : Nat := width * 2 / 3
   let aspectRatio : Float := (Float.ofNat width) / (Float.ofNat height)
-  let numThreads := 8
-  let samplesPerPixel := 10
+  let numThreads := 10
+  let samplesPerPixel := 8
   let maxDepth := 30
 
   IO.println s!"{numThreads} threads, {width}x{height} pixels, {numThreads*samplesPerPixel} total samples per pixel, max depth {maxDepth}."
